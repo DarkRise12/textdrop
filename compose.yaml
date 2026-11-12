@@ -1,5 +1,6 @@
 services:
   textdrop:
+    image: ${TEXTDROP_IMAGE:-textdrop-textdrop}
     build: .
     restart: unless-stopped
     init: true

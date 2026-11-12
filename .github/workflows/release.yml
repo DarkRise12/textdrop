@@ -1,0 +1,62 @@
+name: Test and deploy
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m unittest discover -s tests -v
+      - run: node --check static/app.js
+      - run: sh -n deploy/backup.sh && bash -n deploy/github-deploy.sh
+      - run: docker compose config --quiet
+      - run: docker build -t textdrop-test .
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request' && vars.AUTO_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: textdrop-production
+      cancel-in-progress: false
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare SSH
+        shell: bash
+        run: |
+          set -eu
+          test -n "$DEPLOY_HOST" && test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_SSH_KEY" && test -n "$DEPLOY_KNOWN_HOSTS"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/textdrop
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/textdrop ~/.ssh/known_hosts
+      - name: Build and transfer exact revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" -t "textdrop-release:$GITHUB_SHA" .
+          docker save "textdrop-release:$GITHUB_SHA" | ssh -i ~/.ssh/textdrop \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -p "${DEPLOY_PORT:-22}" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "sudo -n /usr/local/sbin/textdrop-deploy $GITHUB_SHA"
+      - name: Remove SSH material
+        if: always()
+        run: rm -f ~/.ssh/textdrop ~/.ssh/known_hosts
