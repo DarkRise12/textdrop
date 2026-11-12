@@ -1,0 +1,16 @@
+[Unit]
+Description=Textdrop private text exchange
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/textdrop
+EnvironmentFile=%h/textdrop/.env
+ExecStart=/usr/bin/python3 %h/textdrop/server.py
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
