@@ -154,8 +154,13 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(503, {'error': 'Не удалось сохранить запись. Попробуйте снова.'})
 
 
+def configuration_secret(name):
+    path = os.environ.get(name + '_FILE')
+    return Path(path).read_text().rstrip('\r\n') if path else os.environ.get(name)
+
+
 def main():
-    password, secret = os.environ.get('TEXTDROP_PASSWORD'), os.environ.get('TEXTDROP_SECRET')
+    password, secret = configuration_secret('TEXTDROP_PASSWORD'), configuration_secret('TEXTDROP_SECRET')
     if not password or len(password) < 12 or not secret or len(secret) < 32:
         raise SystemExit('Set TEXTDROP_PASSWORD (12+ characters) and TEXTDROP_SECRET (32+ characters).')
     data = Path(os.environ.get('TEXTDROP_DATA', ROOT / 'data'))

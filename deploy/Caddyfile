@@ -1,4 +1,4 @@
-# Site block for Caddy running directly on the application host.
-nikitalebe.dev {
-    reverse_proxy 127.0.0.1:8765
+# Add to the existing Caddyfile. Both services must share CADDY_NETWORK.
+share.nikitalebe.dev {
+    reverse_proxy textdrop-share:8765
 }

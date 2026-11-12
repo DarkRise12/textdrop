@@ -1,0 +1,46 @@
+services:
+  textdrop:
+    build: .
+    restart: unless-stopped
+    init: true
+    environment:
+      TEXTDROP_HOST: 0.0.0.0
+      TEXTDROP_PORT: "8765"
+      TEXTDROP_DATA: /data
+      TEXTDROP_SECURE: "1"
+      TEXTDROP_PASSWORD_FILE: /run/secrets/textdrop_password
+      TEXTDROP_SECRET_FILE: /run/secrets/textdrop_secret
+    secrets:
+      - textdrop_password
+      - textdrop_secret
+    volumes:
+      - textdrop_data:/data
+    networks:
+      proxy:
+        aliases:
+          - textdrop-share
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/session', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  textdrop_data:
+
+networks:
+  proxy:
+    external: true
+    name: ${CADDY_NETWORK:?Set CADDY_NETWORK to the existing Caddy Docker network}
+
+secrets:
+  textdrop_password:
+    file: ./.secrets/password
+  textdrop_secret:
+    file: ./.secrets/session
