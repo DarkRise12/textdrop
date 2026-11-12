@@ -163,7 +163,7 @@ class Handler(BaseHTTPRequestHandler):
                 except sqlite3.Error:
                     return self.reply(503, {'error': 'Не удалось загрузить сообщения. Повторите попытку.'})
             return self.reply(404, {'error': 'Не найдено.'})
-        files = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/theme.js': ('theme.js', 'text/javascript'), '/draft.js': ('draft.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
+        files = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/theme.js': ('theme.js', 'text/javascript'), '/draft.js': ('draft.js', 'text/javascript'), '/editor.js': ('editor.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
         if path not in files:
             return self.reply(404, {'error': 'Не найдено.'})
         name, mime = files[path]

@@ -1,6 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let notes = [], loading = false, generation = 0, online = false;
+let editor = null;
 let noticeKind = '';
 const notice = (message, kind = '') => {
   noticeKind = kind;
@@ -67,7 +68,10 @@ $('history').onscroll = () => {
 $('text').oninput = () => { resizeInput(); saveDraft(); };
 window.addEventListener('pagehide', saveDraft);
 if (window.visualViewport) {
-  const fitViewport = () => document.documentElement.style.setProperty('--app-height', window.visualViewport.height + 'px');
+  const fitViewport = () => {
+    document.documentElement.style.setProperty('--app-height', window.visualViewport.height + 'px');
+    requestAnimationFrame(resizeInput);
+  };
   window.visualViewport.addEventListener('resize', fitViewport);
   fitViewport();
 }
@@ -117,17 +121,60 @@ async function api(path, method = 'GET', body) {
     const fallback = response.status >= 500
       ? 'Сервер временно недоступен. Повтори попытку чуть позже.'
       : response.status === 401 ? 'Войди, чтобы продолжить.' : 'Не удалось выполнить действие. Попробуй снова.';
-    throw apiError(typeof data?.error === 'string' ? data.error : fallback, response.status, kind);
+    const error = apiError(typeof data?.error === 'string' ? data.error : fallback, response.status, kind);
+    if (isNote(data?.current) && Number.isInteger(data.current.version)) error.current = data.current;
+    throw error;
   }
   const valid = path === 'session' ? typeof data?.authenticated === 'boolean'
     : path === 'notes' && method === 'GET' ? Array.isArray(data) && data.every(isNote)
     : path === 'notes' && method === 'POST' ? isNote(data)
+    : path.startsWith('notes/') && method === 'PATCH' ? isNote(data) && Number.isInteger(data.version)
     : data?.ok === true;
   if (!valid) throw apiError('Сервер вернул некорректный ответ. Попробуй снова чуть позже.', response.status, 'protocol');
   return data;
 }
 function errorMessage(error) {
   return error.message || 'Не удалось выполнить действие. Попробуй снова.';
+}
+function focusMessageAction(id) {
+  const item = [...$('notes').querySelectorAll('.note')].find(note => note.dataset.id === id);
+  item?.querySelector('[data-action="edit"]')?.focus({preventScroll: true});
+}
+function beginEdit(note) {
+  if (editor) {
+    if (editor.id !== note.id) notice('Сохрани или отмени текущие правки перед редактированием другого сообщения.', 'edit');
+    editor.field.focus();
+    return;
+  }
+  notice('');
+  editor = new window.TextdropEditor(note, {
+    api,
+    onSaved(saved, state) {
+      if (editor !== state) return;
+      generation++;
+      notes = notes.map(note => note.id === saved.id ? saved : note);
+      editor = null;
+      if (noticeKind === 'edit') notice('');
+      render(); focusMessageAction(saved.id);
+      sync();
+    },
+    onCancel(state) {
+      if (editor === state) {
+        editor = null;
+        if (noticeKind === 'edit') notice('');
+        render(); focusMessageAction(state.id);
+      }
+    },
+    onConflict(current) {
+      generation++;
+      notes = notes.map(note => note.id === current.id ? current : note);
+      render();
+    },
+    onGone(id) { generation++; notes = notes.filter(note => note.id !== id); render(); }
+  });
+  render();
+  editor.field.focus({preventScroll: true});
+  editor.element.scrollIntoView({block: 'nearest'});
 }
 function render({forceBottom = false, searchChanged = false} = {}) {
   const history = $('history');
@@ -139,10 +186,14 @@ function render({forceBottom = false, searchChanged = false} = {}) {
   const focused = document.activeElement;
   const focusId = focused?.closest('.note')?.dataset.id;
   const focusAction = focused?.dataset.action;
+  const selection = focusAction === 'edit-text' ? [focused.selectionStart, focused.selectionEnd] : null;
   const query = $('search').value.toLocaleLowerCase();
-  const filtered = notes.filter(n => n.text.toLocaleLowerCase().includes(query)).slice().reverse();
+  const visible = notes.slice();
+  if (editor && !visible.some(note => note.id === editor.id)) visible.push(editor.note);
+  const filtered = visible.filter(n => n.id === editor?.id || n.text.toLocaleLowerCase().includes(query))
+    .sort((a, b) => b.created - a.created).reverse();
   $('count').textContent = notes.length;
-  $('empty').hidden = notes.length > 0;
+  $('empty').hidden = notes.length > 0 || !!editor;
   $('no-results').hidden = !notes.length || filtered.length > 0;
   const fragment = document.createDocumentFragment();
   let previousDay = '';
@@ -159,6 +210,10 @@ function render({forceBottom = false, searchChanged = false} = {}) {
     const time = document.createElement('time'); time.dateTime = new Date(note.created).toISOString();
     time.textContent = new Intl.DateTimeFormat('ru', {hour:'2-digit', minute:'2-digit'}).format(note.created);
     time.title = date.toLocaleString('ru');
+    const edited = document.createElement('span'); edited.className = 'edited-mark';
+    edited.textContent = note.updated ? ' · изменено' : '';
+    if (note.updated) edited.title = 'Изменено ' + new Date(note.updated).toLocaleString('ru');
+    time.append(edited);
     const actions = document.createElement('div'); actions.className = 'note-actions';
     const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'quiet'; copy.textContent = 'Копировать'; copy.dataset.action = 'copy';
     copy.onclick = async () => {
@@ -175,9 +230,16 @@ function render({forceBottom = false, searchChanged = false} = {}) {
         catch (error) { notice(errorMessage(error)); remove.disabled = false; }
       };
     };
-    actions.append(copy, remove); meta.append(time, actions);
+    const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'quiet';
+    edit.textContent = 'Изменить'; edit.dataset.action = 'edit'; edit.onclick = () => beginEdit(note);
+    actions.append(copy, edit, remove); meta.append(time, actions);
     const text = document.createElement('pre'); text.className = 'note-text'; text.textContent = note.text;
-    article.append(text, meta); fragment.append(article);
+    if (editor?.id === note.id) {
+      article.classList.add('note-editing');
+      actions.hidden = true;
+      article.append(editor.element, meta);
+    } else article.append(text, meta);
+    fragment.append(article);
   }
   $('notes').replaceChildren(fragment);
   if (forceBottom || (!searchChanged && nearBottom)) latest();
@@ -188,7 +250,9 @@ function render({forceBottom = false, searchChanged = false} = {}) {
   }
   if (focusId && focusAction) {
     const item = [...$('notes').querySelectorAll('.note')].find(node => node.dataset.id === focusId);
-    item?.querySelector(`[data-action="${focusAction}"]`)?.focus({preventScroll: true});
+    const target = item?.querySelector(`[data-action="${focusAction}"]`);
+    target?.focus({preventScroll: true});
+    if (selection && target) target.setSelectionRange(...selection);
   }
 }
 async function sync() {
@@ -204,6 +268,7 @@ async function sync() {
     const added = data.some(note => !previousIds.has(note.id));
     const following = $('history').scrollHeight - $('history').scrollTop - $('history').clientHeight < 80;
     notes = data;
+    editor?.reconcile(data);
     if (changed || !online) render({forceBottom: firstLoad && !$('search').value});
     if (added && !firstLoad && !following && !$('search').value) $('latest').hidden = false;
     if (noticeKind === 'sync' || noticeKind === 'start') notice('');
@@ -256,6 +321,8 @@ $('text').onkeydown = event => { if (!event.isComposing && event.key === 'Enter'
 $('logout').onclick = async () => {
   try {
     await api('logout', 'POST');
+    if (editor) editor.closed = true;
+    editor = null;
     pendingSend = null; $('text').value = '';
     let cleared = true;
     try { draftStore?.clear(); } catch { cleared = false; }

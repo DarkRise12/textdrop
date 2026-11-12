@@ -26,7 +26,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .quiet { background: transparent; color: var(--muted); padding: 10px 12px; }
 .quiet:hover { background: var(--hover); color: var(--ink); }
 .top { flex-shrink: 0; display: flex; align-items: center; gap: 24px; min-height: 72px; padding: 12px max(24px, calc((100vw - 1120px) / 2)); border-bottom: 1px solid var(--line); background: var(--paper); }
-.brand { color: var(--ink); text-decoration: none; font-size: 25px; font-weight: 750; letter-spacing: -.035em; display: flex; align-items: center; gap: 5px; }
+.brand { white-space: nowrap; flex-shrink: 0; color: var(--ink); text-decoration: none; font-size: 25px; font-weight: 750; letter-spacing: -.035em; display: flex; align-items: center; gap: 5px; }
 .brand-arrow { color: var(--accent-ink); font-weight: 600; letter-spacing: -.06em; margin-inline: 1px; }
 .tagline { font-size: 13px; color: var(--muted); }
 .top-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
@@ -61,7 +61,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 .note-text { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 15px; line-height: 1.65; margin: 0; tab-size: 4; }
 .note-meta { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
 .note time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.note-actions { display: flex; gap: 2px; }
+.note-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; min-width: 0; gap: 2px; }
 .note-actions button { font-size: 12px; padding: 6px 8px; min-height: 32px; }
 .latest { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); white-space: nowrap; padding: 11px 18px; font-size: 13px; box-shadow: 0 5px 16px #0002; }
 .empty { margin: auto; text-align: center; padding: 32px 12px; }
@@ -99,7 +99,7 @@ dialog p { margin: 16px 0 24px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 [hidden] { display: none !important; }
 @media (max-width: 600px) {
-  .top { min-height: 60px; padding: 8px 16px; gap: 12px; }
+  .top { min-height: 60px; padding: 8px 16px; gap: 8px; }
   .brand { font-size: 23px; }
   .tagline, #theme-label { display: none; }
   .top-actions { gap: 8px; }
@@ -119,3 +119,16 @@ dialog p { margin: 16px 0 24px; }
   .login h1 { font-size: 34px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+
+.note-editing { width: 640px; }
+.edit-form label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.edit-form textarea { flex: none; min-height: 120px; max-height: 240px; padding: 12px; border: 1px solid var(--bubble-line); border-radius: 8px; background: var(--paper); resize: vertical; }
+.edit-form textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.edit-feedback { margin: 12px 0; color: var(--error); font-size: 13px; }
+.edit-conflict { margin-top: 14px; }
+.edit-conflict h3 { font-size: 13px; margin: 0 0 8px; }
+.edit-remote-text { margin: 0; padding: 12px; max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 14px; line-height: 1.6; background: var(--bg); border-radius: 8px; scrollbar-color: var(--line) transparent; }
+.edit-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.edit-actions button, .edit-accept { min-height: 40px; font-size: 13px; padding: 10px 12px; }
+.edit-hint { margin-top: 10px; font-size: 12px; }
+@media (max-width: 600px) { .note-editing { max-width: 100%; } }
