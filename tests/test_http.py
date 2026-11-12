@@ -65,6 +65,10 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.request('GET', '/../server.py')[0], 404)
         self.assertEqual(self.request('GET', '/')[0], 200)
         self.assertEqual(self.request('GET', '/app.js')[0], 200)
+        status, headers, script = self.request('GET', '/theme.js')
+        self.assertEqual(status, 200)
+        self.assertIn('text/javascript', headers)
+        self.assertIn(b'textdrop-theme', script)
         for _ in range(10):
             self.assertEqual(self.request('POST', '/api/login', {'password': 'wrong'})[0], 401)
         self.assertEqual(self.request('POST', '/api/login', {'password': 'correct-password'})[0], 429)

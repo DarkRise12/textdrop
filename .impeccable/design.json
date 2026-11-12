@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-12T11:01:58.255139+00:00",
+  "title": "Design System: Textdrop",
+  "extensions": {
+    "breakpoints": [
+      {
+        "name": "mobile",
+        "value": "600px"
+      }
+    ],
+    "shadows": [
+      {
+        "name": "new-message-button",
+        "value": "0 5px 16px #0002",
+        "purpose": "Floating jump-to-latest action"
+      }
+    ],
+    "motion": [
+      {
+        "name": "button-background",
+        "value": "background .15s",
+        "purpose": "Button feedback; disabled for reduced motion"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Message",
+      "kind": "custom",
+      "html": "<article class=\"note\">Текст под рукой</article>",
+      "css": ".note { padding: 14px 16px; border-radius: 14px 14px 4px 14px; background: var(--bubble); color: var(--ink); }"
+    }
+  ]
+}

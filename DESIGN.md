@@ -1,20 +1,62 @@
+---
+name: Textdrop
+description: Personal text chat across devices
+colors:
+  primary: "#296244"
+  background: "#f2f5f3"
+  paper: "#ffffff"
+  ink: "#242d28"
+  muted: "#626b64"
+  bubble: "#e3eee6"
+  dark-background: "#141c19"
+  dark-paper: "#1c2721"
+  dark-ink: "#e7efe9"
+  dark-muted: "#a4b5a9"
+  dark-primary: "#acd4b5"
+  dark-bubble: "#293f31"
+rounded:
+  control: "10px"
+  message: "14px"
+spacing:
+  compact: "8px"
+  control: "12px"
+  message: "16px"
+  desktop: "28px"
+---
 # Textdrop interface
 
-Operate mode: a quiet personal text inbox. The composer precedes the feed on both desktop and mobile. Single column, newest records first, no decorative imagery.
+## Overview
 
-## Tokens
+Operate mode: a personal chat, explicitly requested by the owner. Preserve the green accent and quiet surfaces. No decorative imagery. The history occupies available space above the bottom composer.
 
-- Background `#f2f5f3`, paper `#ffffff`, text `#242d28`.
-- Secondary text `#626b64`, accent `#296244`, destructive action `#a02d25`.
-- Native system font stack for familiar operating controls and Cyrillic coverage.
-- Content width 832px; desktop padding 32px, mobile padding 20px.
-- Composer radius 14px; inputs/buttons 8px. Feed records use separators.
-- Responsive breakpoint 600px; minimum metadata text 12px.
+## Colors
 
-## Behavior
+Light and dark themes use role-based CSS custom properties. First visit follows system preference; the toggle persists an explicit choice on that device. Apply the theme before styles load to avoid a light flash. Inputs, modal, focus, scrollbars and browser theme color follow the selected palette.
 
-Keyboard focus remains visible. Text preserves whitespace and never becomes HTML. Entry errors retain the draft. Destructive deletion uses a confirmation dialog. Polling does not re-render unchanged content. Reduced-motion preference suppresses transitions.
+## Typography
 
-## Verification limits
+Retain the established system font stack for operating controls and Cyrillic. Message text is 15px with 1.65 line height; inputs are 16px to avoid mobile zoom. Metadata and keyboard hints use 12px minimum. Preserve whitespace, wrap long strings, never interpret messages as HTML.
 
-HTTP handlers verified through in-memory requests; visual/browser review and actual network serving were unavailable because socket creation is denied in the execution sandbox. Design assumptions are provisional pending owner feedback.
+## Layout
+
+The application fits the dynamic viewport. The global header and chat header remain outside the independently scrolling history. Chat width is capped at 960px. Breakpoint: 600px; mobile content padding drops to 12–16px. Respect bottom safe areas and visual viewport resize. Newest messages are at the bottom; short conversations rest near the composer.
+
+## Elevation & Depth
+
+Use flat tonal surfaces and thin borders. Only the floating new-message button has a soft downward shadow.
+
+## Shapes
+
+Right-aligned message bubbles have 14px corners and a 4px lower-right corner. Composer uses a 14px outline, avatar 14px, buttons 10px. Icons are consistent stroked SVG geometry.
+
+## Components
+
+- History: chronological messages grouped by local date. Follow new messages only when already near the bottom. Preserve the visible message anchor when reading older content; show a button to jump to new messages.
+- Composer: grows to 180px maximum, leaves history visible, disables empty submissions. Enter adds a line; Ctrl/Cmd+Enter sends, except during IME composition. Keep text after a failed send.
+- Search: remains above history; sending clears the filter so the saved message is visible.
+- Actions: copy and delete remain visible on mobile. Destructive deletion uses the existing confirmation dialog.
+- Theme: visible on both login and chat screens; accessible name announces the destination theme. Focus remains visible and reduced-motion preference suppresses transitions.
+
+## Do's and Don'ts
+
+Do preserve personal text as literal content and retain existing data/API behavior. Do test both themes on desktop and mobile. Don't force-scroll a reader on polling, hide actions behind hover, or store message contents with theme preferences.
