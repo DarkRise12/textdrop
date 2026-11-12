@@ -2,3 +2,4 @@
 !server.py
 !static/
 !static/**
+!backup.py
