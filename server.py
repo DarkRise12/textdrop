@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -14,11 +15,20 @@ ROOT = Path(__file__).resolve().parent
 LIMIT = 100_000
 
 
+class RequestConflict(ValueError):
+    pass
+
+
+class RequestGone(ValueError):
+    pass
+
+
 class Store:
     def __init__(self, path):
         self.path = path
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, text TEXT NOT NULL, created INTEGER NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS send_requests (request_id TEXT PRIMARY KEY, note_id TEXT NOT NULL, text_hash TEXT NOT NULL)')
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=10)
@@ -29,12 +39,28 @@ class Store:
         with self.connect() as db:
             return [dict(row) for row in db.execute('SELECT * FROM notes ORDER BY created DESC, rowid DESC')]
 
-    def add(self, text):
+    def add(self, text, request_id=None):
         if not isinstance(text, str) or not text.strip() or len(text) > LIMIT:
             raise ValueError('Введите текст длиной от 1 до 100 000 символов.')
+        if request_id is not None and (not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{16,80}', request_id)):
+            raise ValueError('Некорректный идентификатор отправки.')
+        digest = hashlib.sha256(text.encode()).hexdigest()
         note = dict(id=secrets.token_hex(16), text=text, created=int(time.time() * 1000))
         with self.connect() as db:
+            # Serializes check-and-insert across threads/processes, not just this App.
+            db.execute('BEGIN IMMEDIATE')
+            if request_id is not None:
+                previous = db.execute('SELECT note_id, text_hash FROM send_requests WHERE request_id = ?', (request_id,)).fetchone()
+                if previous:
+                    if previous['text_hash'] != digest:
+                        raise RequestConflict('Этот идентификатор уже использован для другого текста.')
+                    existing = db.execute('SELECT * FROM notes WHERE id = ?', (previous['note_id'],)).fetchone()
+                    if existing is None:
+                        raise RequestGone('Сообщение уже было отправлено и удалено. Повтор не восстановит его.')
+                    return dict(existing)
             db.execute('INSERT INTO notes VALUES (:id, :text, :created)', note)
+            if request_id is not None:
+                db.execute('INSERT INTO send_requests VALUES (?, ?, ?)', (request_id, note['id'], digest))
         return note
 
     def delete(self, note_id):
@@ -143,11 +169,15 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/logout' and self.command == 'POST':
                 return self.reply(200, {'ok': True}, self.session_cookie('', 0))
             if self.path == '/api/notes' and self.command == 'POST':
-                return self.reply(201, app.store.add(data.get('text')))
+                return self.reply(201, app.store.add(data.get('text'), data.get('request_id')))
             if self.path.startswith('/api/notes/') and self.command == 'DELETE':
                 deleted = app.store.delete(self.path.removeprefix('/api/notes/'))
                 return self.reply(200 if deleted else 404, {'ok': bool(deleted)})
             self.reply(404, {'error': 'Не найдено.'})
+        except RequestConflict as exc:
+            self.reply(409, {'error': str(exc)})
+        except RequestGone as exc:
+            self.reply(410, {'error': str(exc)})
         except ValueError as exc:
             self.reply(400, {'error': str(exc)})
         except sqlite3.Error:
