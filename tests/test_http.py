@@ -58,6 +58,19 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.request('GET', '/api/notes', headers=auth)[2], [])
         self.assertIn('Max-Age=0', self.request('POST', '/api/logout', headers=auth)[1])
 
+    def test_send_retries_conflict_and_deleted_message(self):
+        auth = {'Cookie': 'session=' + self.app.token()}
+        payload = {'text': 'once', 'request_id': 'request-1234567890'}
+        first = self.request('POST', '/api/notes', payload, auth)
+        again = self.request('POST', '/api/notes', payload, auth)
+        self.assertEqual(first[0], 201)
+        self.assertEqual(first[2], again[2])
+        self.assertEqual(len(self.request('GET', '/api/notes', headers=auth)[2]), 1)
+        self.assertEqual(self.request('POST', '/api/notes', dict(payload, text='changed'), auth)[0], 409)
+        self.request('DELETE', '/api/notes/' + first[2]['id'], headers=auth)
+        self.assertEqual(self.request('POST', '/api/notes', payload, auth)[0], 410)
+        self.assertEqual(self.request('POST', '/api/notes', payload)[0], 401)
+
     def test_input_origin_and_routes(self):
         auth = {'Cookie': 'session=' + self.app.token()}
         self.assertEqual(self.request('POST', '/api/notes', {'text': ''}, auth)[0], 400)

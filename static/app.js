@@ -7,6 +7,36 @@ const notice = message => {
   $('login-feedback').textContent = message;
   $('login-feedback').hidden = !message || $('login').hidden;
 };
+let draftStore, draftReady = false, pendingSend = null;
+function draftStatus(text, error = false) {
+  if ($('draft-status').textContent !== text) $('draft-status').textContent = text;
+  $('draft-status').hidden = !text;
+  $('draft-status').classList.toggle('error', error);
+}
+function saveDraft() {
+  if (!draftReady) return;
+  try {
+    draftStore.save($('text').value, pendingSend);
+    draftStatus($('text').value ? 'Черновик сохранён на этом устройстве' : '');
+  } catch {
+    draftStatus('Не удалось сохранить черновик на устройстве. Не закрывай вкладку.', true);
+  }
+}
+function restoreDraft() {
+  draftReady = true;
+  try {
+    draftStore = new window.TextdropDraft(localStorage);
+    const draft = draftStore.load();
+    if (draft) {
+      $('text').value = draft.text;
+      pendingSend = draft.pending || null;
+      draftStatus(draft.text ? 'Черновик восстановлен' : '');
+    }
+  } catch { draftStatus('Хранилище браузера недоступно. Черновик сохранится только в этой вкладке.', true); }
+}
+function requestId() {
+  return [...crypto.getRandomValues(new Uint8Array(16))].map(value => value.toString(16).padStart(2, '0')).join('');
+}
 function themeLabel() {
   const dark = document.documentElement.dataset.theme === 'dark';
   $('theme-toggle').setAttribute('aria-pressed', String(dark));
@@ -32,7 +62,8 @@ $('latest').onclick = latest;
 $('history').onscroll = () => {
   if ($('history').scrollHeight - $('history').scrollTop - $('history').clientHeight < 80) $('latest').hidden = true;
 };
-$('text').oninput = resizeInput;
+$('text').oninput = () => { resizeInput(); saveDraft(); };
+window.addEventListener('pagehide', saveDraft);
 if (window.visualViewport) {
   const fitViewport = () => document.documentElement.style.setProperty('--app-height', window.visualViewport.height + 'px');
   window.visualViewport.addEventListener('resize', fitViewport);
@@ -44,8 +75,11 @@ function session(active) {
   $('workspace').hidden = !active;
   $('logout').hidden = !active;
   $('login-feedback').hidden = active || !$('login-feedback').textContent;
-  if (active) requestAnimationFrame(resizeInput);
-  if (!active) { online = false; notes = []; $('notes').replaceChildren(); $('text').value = ''; $('latest').hidden = true; }
+  if (active) {
+    if (!draftReady) restoreDraft();
+    requestAnimationFrame(resizeInput);
+  }
+  if (!active) { online = false; notes = []; $('notes').replaceChildren(); $('latest').hidden = true; }
 }
 async function api(path, method = 'GET', body) {
   const response = await fetch('/api/' + path, {
@@ -56,7 +90,9 @@ async function api(path, method = 'GET', body) {
   const data = await response.json();
   if (!response.ok) {
     if (response.status === 401 && path !== 'login') session(false);
-    throw new Error(data.error || 'Ошибка сервера. Попробуй снова.');
+    const error = new Error(data.error || 'Ошибка сервера. Попробуй снова.');
+    error.status = response.status;
+    throw error;
   }
   return data;
 }
@@ -161,22 +197,39 @@ $('compose').onsubmit = async event => {
   if (button.disabled || !$('text').value.trim()) return;
   button.disabled = true; button.classList.add('sending'); button.setAttribute('aria-label', 'Отправляем сообщение'); notice('');
   const text = $('text').value;
+  if (!pendingSend || pendingSend.text !== text) pendingSend = {text, id: requestId()};
+  const sending = pendingSend;
+  saveDraft(); // Persist the retry identifier before the request can reach the server.
   try {
-    const saved = await api('notes', 'POST', {text});
+    const saved = await api('notes', 'POST', {text, request_id: sending.id});
+    if (pendingSend === sending) pendingSend = null;
     generation++; // Ignore a poll that began before this message was saved.
     notes = [saved, ...notes.filter(note => note.id !== saved.id)];
     if ($('text').value === text) $('text').value = '';
+    saveDraft();
     $('search').value = '';
     resizeInput();
     render({forceBottom: true});
     $('text').focus({preventScroll: true});
     await sync();
-  } catch (error) { notice(errorMessage(error)); }
+  } catch (error) {
+    if ([409, 410].includes(error.status) && pendingSend === sending) pendingSend = null;
+    saveDraft();
+    notice(errorMessage(error));
+  }
   finally { button.classList.remove('sending'); button.setAttribute('aria-label', 'Отправить сообщение'); resizeInput(); }
 };
 $('text').onkeydown = event => { if (!event.isComposing && event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); $('compose').requestSubmit(); } };
 $('logout').onclick = async () => {
-  try { await api('logout', 'POST'); session(false); notice(''); $('password').focus(); }
+  try {
+    await api('logout', 'POST');
+    pendingSend = null; $('text').value = '';
+    let cleared = true;
+    try { draftStore?.clear(); } catch { cleared = false; }
+    draftStatus(''); session(false);
+    notice(cleared ? '' : 'Вы вышли, но очистить черновик не удалось. Удалите данные сайта в настройках браузера.');
+    $('password').focus();
+  }
   catch (error) { notice(errorMessage(error)); }
 };
 $('search').oninput = () => render({searchChanged: true});

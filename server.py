@@ -123,7 +123,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/notes':
                 return self.reply(200, self.server.app.store.notes())
             return self.reply(404, {'error': 'Не найдено.'})
-        files = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/theme.js': ('theme.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
+        files = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/theme.js': ('theme.js', 'text/javascript'), '/draft.js': ('draft.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
         if path not in files:
             return self.reply(404, {'error': 'Не найдено.'})
         name, mime = files[path]

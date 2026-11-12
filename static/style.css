@@ -77,6 +77,8 @@ textarea { display: block; flex: 1; min-width: 0; width: 100%; resize: none; min
 textarea:focus { outline: 0; }
 #send { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; flex-shrink: 0; }
 #send.sending svg { opacity: .45; }
+.draft-status { color: var(--muted); font-size: 12px; padding: 8px 3px 0; }
+.draft-status.error { color: var(--error); }
 .compose-footer { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12px; padding: 9px 3px 0; }
 #notice, .login-feedback { font-size: 14px; color: var(--error); }
 .feedback:has(:not([hidden])) { margin-bottom: 12px; }

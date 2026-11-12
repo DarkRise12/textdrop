@@ -52,7 +52,7 @@ Right-aligned message bubbles have 14px corners and a 4px lower-right corner. Co
 ## Components
 
 - History: chronological messages grouped by local date. Follow new messages only when already near the bottom. Preserve the visible message anchor when reading older content; show a button to jump to new messages.
-- Composer: grows to 180px maximum, leaves history visible, disables empty submissions. Enter adds a line; Ctrl/Cmd+Enter sends, except during IME composition. Keep text after a failed send.
+- Composer: grows to 180px maximum, leaves history visible, disables empty submissions. Enter adds a line; Ctrl/Cmd+Enter sends, except during IME composition. Keep text after a failed send. Show a quiet local-draft status below the input, or an error-colored warning when browser storage is unavailable; draft contents never appear on the login screen.
 - Search: remains above history; sending clears the filter so the saved message is visible.
 - Actions: copy and delete remain visible on mobile. Destructive deletion uses the existing confirmation dialog.
 - Header: wordmark reads `text->drop`, with the arrow in accent ink. Theme control has a tinted outlined surface; logout is a solid accent button. The chat header shows message count and sync status, with no Saved Messages title.
