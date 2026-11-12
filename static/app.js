@@ -7,7 +7,7 @@ function session(active) {
   $('login').hidden = active;
   $('workspace').hidden = !active;
   $('logout').hidden = !active;
-  if (!active) { notes = []; $('notes').replaceChildren(); $('text').value = ''; }
+  if (!active) { online = false; notes = []; $('notes').replaceChildren(); $('text').value = ''; }
 }
 async function api(path, method = 'GET', body) {
   const response = await fetch('/api/' + path, {
