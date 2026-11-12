@@ -106,6 +106,27 @@ class HttpTests(unittest.TestCase):
         self.request('DELETE', path, headers=auth)
         self.assertEqual(self.request('PATCH', path, dict(body, version=1), auth)[0], 410)
 
+    def test_trash_auth_restore_and_permanent_deletion(self):
+        auth = {'Cookie': 'session=' + self.app.token()}
+        note = self.app.store.add('Trash test')
+        trash_path = '/api/trash/' + note['id']
+        self.assertEqual(self.request('GET', '/api/trash')[0], 401)
+        self.assertEqual(self.request('POST', trash_path + '/restore')[0], 401)
+        self.assertEqual(self.request('DELETE', trash_path)[0], 401)
+        self.assertEqual(self.request('DELETE', '/api/notes/' + note['id'], headers=auth)[0], 200)
+        self.assertEqual(self.request('GET', '/api/notes', headers=auth)[2], [])
+        self.assertEqual(self.request('GET', '/api/trash', headers=auth)[2][0]['id'], note['id'])
+        self.assertEqual(self.request('POST', trash_path + '/restore', {}, dict(auth, Origin='https://evil.test'))[0], 403)
+        restored = self.request('POST', trash_path + '/restore', {}, auth)
+        self.assertEqual(restored[0], 200)
+        self.assertEqual(restored[2]['id'], note['id'])
+        self.assertEqual(self.request('DELETE', trash_path, headers=auth)[0], 404)
+        self.assertEqual(len(self.request('GET', '/api/notes', headers=auth)[2]), 1)
+        self.request('DELETE', '/api/notes/' + note['id'], headers=auth)
+        self.assertEqual(self.request('DELETE', trash_path, headers=auth)[0], 200)
+        self.assertEqual(self.request('POST', trash_path + '/restore', {}, auth)[0], 410)
+        self.assertEqual(self.request('GET', '/api/trash', headers=auth)[2], [])
+
     def test_input_origin_and_routes(self):
         auth = {'Cookie': 'session=' + self.app.token()}
         self.assertEqual(self.request('POST', '/api/notes', {'text': ''}, auth)[0], 400)

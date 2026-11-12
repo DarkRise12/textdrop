@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import sqlite3
+import sys
 import time
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 LIMIT = 100_000
+TRASH_LIFETIME = 30 * 24 * 60 * 60 * 1000
 NOTE_SELECT = '''SELECT n.id, n.text, n.created, COALESCE(v.version, 0) AS version,
                  v.updated FROM notes n LEFT JOIN note_versions v ON v.note_id = n.id'''
 
@@ -39,6 +41,10 @@ class Store:
             db.execute('CREATE TABLE IF NOT EXISTS send_requests (request_id TEXT PRIMARY KEY, note_id TEXT NOT NULL, text_hash TEXT NOT NULL)')
             # Separate metadata keeps the original notes schema compatible with rollback.
             db.execute('CREATE TABLE IF NOT EXISTS note_versions (note_id TEXT PRIMARY KEY, version INTEGER NOT NULL, updated INTEGER NOT NULL)')
+            db.execute('''CREATE TABLE IF NOT EXISTS trash (
+                id TEXT PRIMARY KEY, text TEXT NOT NULL, created INTEGER NOT NULL,
+                version INTEGER NOT NULL, updated INTEGER, deleted INTEGER NOT NULL, expires INTEGER NOT NULL)''')
+            db.execute('CREATE INDEX IF NOT EXISTS trash_expiry ON trash(expires)')
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=10)
@@ -100,9 +106,48 @@ class Store:
 
     def delete(self, note_id):
         with self.connect() as db:
-            deleted = db.execute('DELETE FROM notes WHERE id = ?', (note_id,)).rowcount > 0
+            db.execute('BEGIN IMMEDIATE')
+            now = int(time.time() * 1000)
+            row = db.execute(NOTE_SELECT + ' WHERE n.id = ?', (note_id,)).fetchone()
+            if row is None:
+                # A repeated deletion never extends the original retention deadline.
+                return db.execute('SELECT 1 FROM trash WHERE id = ? AND expires > ?', (note_id, now)).fetchone() is not None
+            note = dict(row, deleted=now, expires=now + TRASH_LIFETIME)
+            db.execute('INSERT INTO trash VALUES (:id, :text, :created, :version, :updated, :deleted, :expires)', note)
+            db.execute('DELETE FROM notes WHERE id = ?', (note_id,))
             db.execute('DELETE FROM note_versions WHERE note_id = ?', (note_id,))
-            return deleted
+            return True
+
+    def purge_expired(self):
+        with self.connect() as db:
+            return db.execute('DELETE FROM trash WHERE expires <= ?', (int(time.time() * 1000),)).rowcount
+
+    def trash(self):
+        self.purge_expired()
+        with self.connect() as db:
+            return [dict(row) for row in db.execute('SELECT * FROM trash WHERE expires > ? ORDER BY deleted DESC, rowid DESC', (int(time.time() * 1000),))]
+
+    def restore(self, note_id):
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT * FROM trash WHERE id = ? AND expires > ?', (note_id, int(time.time() * 1000))).fetchone()
+            if row is None:
+                # Restoring again after a lost response is safe and does not bump the version.
+                active = db.execute(NOTE_SELECT + ' WHERE n.id = ?', (note_id,)).fetchone()
+                if active is not None:
+                    return dict(active)
+                raise RequestGone('Срок хранения истёк или сообщение удалено окончательно. Восстановить его нельзя.')
+            note = dict(row)
+            db.execute('INSERT INTO notes VALUES (:id, :text, :created)', note)
+            # Invalidate editors opened before the deletion/restoration lifecycle.
+            db.execute('INSERT INTO note_versions VALUES (?, ?, ?)', (note_id, note['version'] + 1, note['updated'] or 0))
+            db.execute('DELETE FROM trash WHERE id = ?', (note_id,))
+            return dict(db.execute(NOTE_SELECT + ' WHERE n.id = ?', (note_id,)).fetchone())
+
+    def purge(self, note_id):
+        with self.connect() as db:
+            # Never delete an active message when restore and permanent delete race.
+            return db.execute('DELETE FROM trash WHERE id = ?', (note_id,)).rowcount > 0
 
 
 class App:
@@ -157,13 +202,14 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith('/api/'):
             if not self.server.app.authenticated(self.headers.get('Cookie')):
                 return self.reply(401, {'error': 'Войдите, чтобы открыть записи.'})
-            if path == '/api/notes':
+            if path in ('/api/notes', '/api/trash'):
                 try:
-                    return self.reply(200, self.server.app.store.notes())
+                    records = self.server.app.store.trash() if path == '/api/trash' else self.server.app.store.notes()
+                    return self.reply(200, records)
                 except sqlite3.Error:
                     return self.reply(503, {'error': 'Не удалось загрузить сообщения. Повторите попытку.'})
             return self.reply(404, {'error': 'Не найдено.'})
-        files = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/theme.js': ('theme.js', 'text/javascript'), '/draft.js': ('draft.js', 'text/javascript'), '/editor.js': ('editor.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
+        files = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/theme.js': ('theme.js', 'text/javascript'), '/draft.js': ('draft.js', 'text/javascript'), '/editor.js': ('editor.js', 'text/javascript'), '/links.js': ('links.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
         if path not in files:
             return self.reply(404, {'error': 'Не найдено.'})
         name, mime = files[path]
@@ -213,6 +259,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, {'ok': True}, self.session_cookie('', 0))
             if self.path == '/api/notes' and self.command == 'POST':
                 return self.reply(201, app.store.add(data.get('text'), data.get('request_id')))
+            restore_match = re.fullmatch(r'/api/trash/([^/]+)/restore', self.path)
+            if restore_match and self.command == 'POST':
+                return self.reply(200, app.store.restore(restore_match[1]))
+            purge_match = re.fullmatch(r'/api/trash/([^/]+)', self.path)
+            if purge_match and self.command == 'DELETE':
+                if app.store.purge(purge_match[1]):
+                    return self.reply(200, {'ok': True})
+                return self.reply(404, {'error': 'Сообщение уже восстановлено или удалено окончательно.'})
             if self.path.startswith('/api/notes/') and self.command == 'PATCH':
                 note = app.store.edit(self.path.removeprefix('/api/notes/'), data.get('text'), data.get('version'))
                 return self.reply(200, note)
@@ -238,6 +292,21 @@ def configuration_secret(name):
     return Path(path).read_text().rstrip('\r\n') if path else os.environ.get(name)
 
 
+class TextdropServer(ThreadingHTTPServer):
+    def service_actions(self):
+        # Expired items are immediately unavailable via the API; also remove them
+        # physically when the trash is never opened. No external scheduler needed.
+        now = time.monotonic()
+        if now < getattr(self, '_next_cleanup', 0):
+            return
+        self._next_cleanup = now + 3600
+        try:
+            self.app.store.purge_expired()
+        except sqlite3.Error:
+            self._next_cleanup = now + 60
+            print('Trash cleanup failed; retrying later.', file=sys.stderr, flush=True)
+
+
 def main():
     password, secret = configuration_secret('TEXTDROP_PASSWORD'), configuration_secret('TEXTDROP_SECRET')
     if not password or len(password) < 12 or not secret or len(secret) < 32:
@@ -245,7 +314,7 @@ def main():
     data = Path(os.environ.get('TEXTDROP_DATA', ROOT / 'data'))
     data.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.umask(0o077)
-    server = ThreadingHTTPServer((os.environ.get('TEXTDROP_HOST', '127.0.0.1'), int(os.environ.get('TEXTDROP_PORT', '8765'))), Handler)
+    server = TextdropServer((os.environ.get('TEXTDROP_HOST', '127.0.0.1'), int(os.environ.get('TEXTDROP_PORT', '8765'))), Handler)
     server.app = App(Store(data / 'notes.sqlite3'), password, secret, os.environ.get('TEXTDROP_SECURE') == '1')
     print('Textdrop listening on port', server.server_port, flush=True)
     server.serve_forever()

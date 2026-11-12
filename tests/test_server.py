@@ -19,7 +19,7 @@ class StorageTests(unittest.TestCase):
         reopened = Store(self.path)
         self.assertEqual(reopened.notes(), [second, first])
         self.assertTrue(reopened.delete(first['id']))
-        self.assertFalse(reopened.delete(first['id']))
+        self.assertTrue(reopened.delete(first['id']))
         self.assertEqual(reopened.notes(), [second])
 
     def test_invalid_text(self):
