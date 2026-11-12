@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#f5f4ef"><title>Textdrop — текст под рукой</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+<header class="top"><a href="/" class="brand">textdrop<span class="brand-dot"></span></a><span class="tagline">Между твоими устройствами</span><button id="logout" hidden class="quiet">Выйти</button></header>
+<main>
+<section id="login" hidden class="login"><h1>Твой текст.<br>На любом устройстве.</h1><p>Войди, чтобы открыть общую ленту.</p><form id="login-form"><label for="password">Пароль</label><input id="password" type="password" autocomplete="current-password" required minlength="12"><button type="submit">Открыть ленту <span aria-hidden="true">→</span></button></form></section>
+<section id="workspace" hidden>
+<div class="intro"><div><h1>Под рукой</h1><p>Оставь здесь текст. Продолжи на другом устройстве.</p></div><span id="connection" role="status">Подключаемся…</span></div>
+<form id="compose" class="composer"><label for="text">Что передать?</label><textarea id="text" maxlength="100000" rows="5" placeholder="Ссылка, мысль или фрагмент кода…" required></textarea><div class="compose-footer"><span id="counter">Ctrl / ⌘ + Enter — отправить</span><button type="submit">Сохранить <span aria-hidden="true">↑</span></button></div></form>
+<div class="list-header"><h2>Твоя лента <span id="count">0</span></h2><label class="search-label"><span class="sr-only">Поиск по тексту</span><input id="search" type="search" placeholder="Найти в записях…"></label></div>
+<div id="empty" class="empty" hidden><h3>Здесь начинается обмен</h3><p>Сохрани первый текст — он появится на всех твоих устройствах.</p></div>
+<div id="no-results" class="empty" hidden><h3>Ничего не найдено</h3><p>Попробуй изменить поисковый запрос.</p></div>
+<div id="notes"></div>
+<p class="footnote">Только текст. Только для тебя.</p>
+</section>
+<p id="notice" role="status" aria-live="polite" hidden></p><button id="retry" hidden class="quiet">Повторить подключение</button>
+</main>
+<dialog id="delete-dialog"><form method="dialog"><h2>Удалить запись?</h2><p>Она исчезнет на всех устройствах. Отменить удаление не получится.</p><div class="dialog-actions"><button value="cancel" class="quiet">Оставить</button><button value="delete" class="danger">Удалить</button></div></form></dialog>
+</body></html>
