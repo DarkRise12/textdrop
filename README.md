@@ -4,11 +4,11 @@
 
 ## Запуск с существующим Caddy в Docker
 
-Выполняйте команды в обычной SSH-сессии с доступом к Docker. Нужен Docker Compose v2+. Найдите имя контейнера Caddy и его сеть:
+Выполняйте команды в обычной SSH-сессии с доступом к Docker. Нужен Docker Compose v2+. Текущий контейнер Caddy — `caddy-caddy-1`, сеть — `caddy_default`. Проверить их можно так:
 
 ```bash
 docker ps --format 'table {{.Names}}\t{{.Networks}}'
-docker network inspect ИМЯ_СЕТИ --format '{{.Driver}}'
+docker network inspect caddy_default --format '{{.Driver}}'
 ```
 
 Используйте пользовательскую bridge-сеть Caddy, поддерживающую DNS контейнеров. Если Caddy использует `host` или стандартную сеть `bridge`, потребуется отдельная общая сеть и её подключение в конфигурации Compose Caddy.
@@ -16,14 +16,19 @@ docker network inspect ИМЯ_СЕТИ --format '{{.Driver}}'
 ```bash
 cd ~/textdrop
 python3 deploy/setup-docker-secrets.py
-export CADDY_NETWORK=ИМЯ_СЕТИ_CADDY
 docker compose up -d --build
 docker compose ps
 ```
 
-Сохраните `CADDY_NETWORK` для следующих запусков (например, в настройках вашей shell). Скрипт спрашивает пароль интерактивно и не перезаписывает секреты. Приложение работает без root, хранит SQLite в именованном томе и не публикует порт 8765 на хосте. Caddy обращается к нему по имени `textdrop-share` в общей сети.
+По умолчанию используется сеть `caddy_default`; для другой сети задайте `CADDY_NETWORK`. Скрипт спрашивает пароль интерактивно и не перезаписывает секреты. Приложение работает без root, хранит SQLite в именованном томе и не публикует порт 8765 на хосте. Caddy обращается к нему по имени `textdrop-share` в общей сети.
 
-Добавьте в **действующий** Caddyfile отдельный блок:
+Чтобы найти действующий Caddyfile на хосте, посмотрите bind mounts:
+
+```bash
+docker inspect caddy-caddy-1 --format '{{range .Mounts}}{{println .Source "->" .Destination}}{{end}}'
+```
+
+Если `/etc/caddy` смонтирован как каталог, файл находится в его источнике под именем `Caddyfile`. Сделайте резервную копию файла перед изменением. Добавьте в **действующий** Caddyfile отдельный блок:
 
 ```caddyfile
 share.nikitalebe.dev {
@@ -31,11 +36,11 @@ share.nikitalebe.dev {
 }
 ```
 
-Основной домен и другие блоки не меняйте. Если блок поддомена уже существует, отредактируйте его, не дублируйте. Для стандартного пути внутри контейнера проверьте и примените конфигурацию (замените `ИМЯ_CADDY`):
+Основной домен и другие блоки не меняйте. Если блок поддомена уже существует, отредактируйте его, не дублируйте. Для стандартного пути внутри контейнера проверьте и примените конфигурацию (контейнер `caddy-caddy-1`):
 
 ```bash
-docker exec ИМЯ_CADDY caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-docker exec ИМЯ_CADDY caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+docker exec caddy-caddy-1 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+docker exec caddy-caddy-1 caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 curl -i https://share.nikitalebe.dev/api/session
 ```
 

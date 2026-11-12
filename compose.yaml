@@ -37,7 +37,7 @@ volumes:
 networks:
   proxy:
     external: true
-    name: ${CADDY_NETWORK:?Set CADDY_NETWORK to the existing Caddy Docker network}
+    name: ${CADDY_NETWORK:-caddy_default}
 
 secrets:
   textdrop_password:
