@@ -83,7 +83,7 @@ function session(active) {
   $('workspace').hidden = !active;
   $('logout').hidden = !active;
   $('login-retry').hidden = true;
-  if (!active) $('connection').textContent = 'Требуется вход';
+  if (!active) setConnection('Требуется вход', 'auth');
   $('login-feedback').hidden = active || !$('login-feedback').textContent;
   if (active) {
     if (!draftReady) restoreDraft();
@@ -141,8 +141,30 @@ async function api(path, method = 'GET', body) {
 function errorMessage(error) {
   return error.message || 'Не удалось выполнить действие. Попробуй снова.';
 }
+function setConnection(message, state = 'loading') {
+  $('connection').textContent = message;
+  $('connection').title = message;
+  $('connection').dataset.state = state;
+}
+const mobileLayout = matchMedia('(max-width: 600px)');
+function setSearchOpen(open, focus = false) {
+  $('workspace-toolbar').classList.toggle('search-open', open);
+  $('search-toggle').setAttribute('aria-expanded', String(open));
+  $('search-toggle').setAttribute('aria-label', open ? 'Закрыть поиск' : 'Открыть поиск');
+  if (!open && $('search').value) { $('search').value = ''; render({searchChanged: true}); }
+  if (focus) (open ? $('search') : $('search-toggle')).focus({preventScroll: true});
+}
+$('search-toggle').onclick = () => setSearchOpen($('search-toggle').getAttribute('aria-expanded') !== 'true', true);
+$('search').onkeydown = event => {
+  if (event.key === 'Escape' && mobileLayout.matches) { event.preventDefault(); setSearchOpen(false, true); }
+};
+mobileLayout.addEventListener('change', event => {
+  if (event.matches) setSearchOpen(Boolean($('search').value) || document.activeElement === $('search'));
+});
+setConnection($('connection').textContent);
 function configureView() {
   const inTrash = view === 'trash';
+  setSearchOpen(false);
   $('workspace').dataset.view = view;
   $('workspace').setAttribute('aria-label', inTrash ? 'Корзина сообщений' : 'Личный чат');
   $('history').setAttribute('aria-label', inTrash ? 'Удалённые сообщения' : 'История сообщений');
@@ -151,6 +173,7 @@ function configureView() {
   $('view-trash').setAttribute('aria-pressed', String(inTrash));
   $('compose-controls').hidden = inTrash;
   $('trash-hint').hidden = !inTrash;
+  if (!inTrash) requestAnimationFrame(resizeInput);
   $('empty').querySelector('h2').textContent = inTrash ? 'Корзина пуста' : 'Чат с собой';
   $('empty').querySelector('p').textContent = inTrash ? 'Удалённые сообщения появятся здесь. Их можно восстановить в течение 30 дней.' : 'Отправь текст здесь. Он будет под рукой на любом устройстве.';
   $('empty').querySelector('.empty-mark').hidden = inTrash;
@@ -165,7 +188,7 @@ function switchView(next) {
   online = false;
   $('search').value = '';
   $('latest').hidden = true;
-  $('connection').textContent = 'Загружаем…';
+  setConnection('Загружаем…');
   notice('');
   configureView(); render({searchChanged: true});
   sync();
@@ -247,6 +270,24 @@ function beginEdit(note) {
   editor.field.focus({preventScroll: true});
   editor.element.scrollIntoView({block: 'nearest'});
 }
+const actionPaths = {
+  copy: 'M9 9h11v11H9zM15 9V4H4v11h5',
+  edit: 'M4 16v4h4L20 8l-4-4L4 16ZM14 6l4 4',
+  delete: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7m4-7v7',
+  restore: 'M4 10a8 8 0 1 1 0 6M4 4v6h6'
+};
+function actionLabel(button, label) {
+  let text = button.querySelector('.action-label');
+  if (!text) {
+    text = document.createElement('span'); text.className = 'action-label';
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('aria-hidden', 'true'); icon.classList.add('action-icon');
+    const shape = document.createElementNS('http://www.w3.org/2000/svg', 'path'); icon.append(shape);
+    button.replaceChildren(icon, text);
+  }
+  text.textContent = label; button.setAttribute('aria-label', label); button.title = label;
+  button.querySelector('path').setAttribute('d', label === 'Скопировано' ? 'm5 12 4 4 10-10' : actionPaths[button.dataset.action]);
+}
 function render({forceBottom = false, searchChanged = false} = {}) {
   const history = $('history');
   const nearBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 80;
@@ -288,7 +329,7 @@ function render({forceBottom = false, searchChanged = false} = {}) {
     const actions = document.createElement('div'); actions.className = 'note-actions';
     const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'quiet'; copy.textContent = 'Копировать'; copy.dataset.action = 'copy';
     copy.onclick = async () => {
-      try { await navigator.clipboard.writeText(note.text); copy.textContent = 'Скопировано'; setTimeout(() => { copy.textContent = 'Копировать'; }, 1800); }
+      try { await navigator.clipboard.writeText(note.text); actionLabel(copy, 'Скопировано'); setTimeout(() => { actionLabel(copy, 'Копировать'); }, 1800); }
       catch { notice('Не удалось скопировать. Выдели текст и скопируй вручную. Для кнопки нужен HTTPS.'); }
     };
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'quiet'; remove.textContent = 'Удалить'; remove.dataset.action = 'delete';
@@ -300,11 +341,15 @@ function render({forceBottom = false, searchChanged = false} = {}) {
       const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'quiet';
       restore.textContent = 'Восстановить'; restore.dataset.action = 'restore';
       restore.onclick = () => restoreMessage(note, restore);
+      actionLabel(copy, 'Копировать'); actionLabel(restore, 'Восстановить'); actionLabel(remove, 'Удалить навсегда');
       actions.append(copy, restore, remove);
       const expires = document.createElement('span'); expires.className = 'trash-expiry';
       expires.textContent = 'Удалится ' + new Date(note.expires).toLocaleString('ru', {day:'numeric', month:'long', hour:'2-digit', minute:'2-digit'});
       meta.append(expires, actions);
-    } else { actions.append(copy, edit, remove); meta.append(time, actions); }
+    } else {
+      actionLabel(copy, 'Копировать'); actionLabel(edit, 'Изменить'); actionLabel(remove, 'Удалить');
+      actions.append(copy, edit, remove); meta.append(time, actions);
+    }
     const text = document.createElement('pre'); text.className = 'note-text'; window.TextdropLinks.append(text, note.text);
     if (editor?.id === note.id) {
       article.classList.add('note-editing');
@@ -348,13 +393,13 @@ async function sync() {
     if (view === 'chat' && added && !firstLoad && !following && !$('search').value) $('latest').hidden = false;
     if (noticeKind === 'sync' || noticeKind === 'start') notice('');
     online = true;
-    $('connection').textContent = 'Синхронизировано'; $('retry').hidden = true;
+    setConnection('Синхронизировано', 'ready'); $('retry').hidden = true;
   } catch (error) {
     if (current !== generation) return;
     online = false;
-    $('connection').textContent = error.kind === 'server' ? 'Сервер недоступен'
+    setConnection(error.kind === 'server' ? 'Сервер недоступен'
       : error.kind === 'protocol' ? 'Ошибка ответа сервера'
-      : error.kind === 'timeout' ? 'Сервер не отвечает' : 'Нет соединения';
+      : error.kind === 'timeout' ? 'Сервер не отвечает' : 'Нет соединения', 'error');
     $('retry').hidden = $('workspace').hidden;
     notice(errorMessage(error), 'sync');
   } finally { loading = false; if (syncAgain) { syncAgain = false; sync(); } }
@@ -382,7 +427,7 @@ $('compose').onsubmit = async event => {
     saveDraft();
     resizeInput();
     if (view === 'chat' && !$('workspace').hidden) {
-      $('search').value = ''; render({forceBottom: true});
+      $('search').value = ''; setSearchOpen(false); render({forceBottom: true});
       $('text').focus({preventScroll: true});
     }
     await sync();

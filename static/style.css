@@ -144,3 +144,45 @@ dialog p { margin: 16px 0 24px; }
 #workspace[data-view="trash"] #notes { margin-top: 0; align-items: stretch; }
 #workspace[data-view="trash"] .note { width: 100%; max-width: 100%; border-radius: 14px; }
 @media (max-width: 600px) { .view-switch { padding: 6px 12px; } }
+
+.workspace-toolbar { display: contents; }
+.search-toggle, .mobile-count-suffix { display: none; }
+.search-close-icon { display: none; }
+.search-toggle[aria-expanded="true"] .search-open-icon { display: none; }
+.search-toggle[aria-expanded="true"] .search-close-icon { display: block; }
+@media (max-width: 600px) {
+  .workspace-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-height: 48px; padding: 4px 12px; background: var(--paper); border-bottom: 1px solid var(--line); flex-shrink: 0; }
+  .workspace-toolbar .view-switch { padding: 0; border: 0; gap: 2px; background: transparent; }
+  .view-switch button { padding: 8px 10px; }
+  .chat-header { display: contents; }
+  .chat-avatar { display: none; }
+  .chat-identity { margin-left: auto; gap: 0; }
+  .chat-identity > div:last-child { display: flex; align-items: center; gap: 8px; }
+  .message-count { display: inline-flex; align-items: center; gap: 3px; margin: 0; font-size: 12px; white-space: nowrap; }
+  #count-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  #count { margin: 0; color: var(--ink); font-weight: 600; }
+  .mobile-count-suffix { display: inline; color: var(--muted); font-weight: 400; }
+  #connection { display: inline-flex; width: 8px; height: 8px; font-size: 0; color: var(--muted); }
+  #connection::before { content: ''; width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: currentColor; }
+  #connection[data-state="ready"] { color: var(--accent-ink); }
+  #connection[data-state="error"] { color: var(--error); }
+  .search-toggle { display: grid; place-items: center; flex-shrink: 0; width: 40px; height: 40px; padding: 8px; }
+  .search-label { display: none; flex: 0 0 100%; width: 100%; padding: 0 8px; }
+  .workspace-toolbar.search-open .search-label { display: flex; }
+  input[type="search"] { min-height: 40px; }
+  .history-content { padding: 8px 12px 14px; }
+  #notes { gap: 8px; }
+  .note { padding: 10px 12px 7px; }
+  .note-meta { margin-top: 6px; }
+  .day-divider { padding: 8px 0 4px; }
+  .compose-footer { display: none; }
+}
+
+.action-icon { display: none; }
+@media (max-width: 600px) {
+  .note-actions { flex-wrap: nowrap; }
+  .note-actions button { display: grid; place-items: center; width: 40px; min-width: 40px; height: 40px; padding: 9px; }
+  .note-actions .action-icon { display: block; width: 19px; height: 19px; }
+  .note-actions .action-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .note-meta { margin-top: 4px; }
+}
