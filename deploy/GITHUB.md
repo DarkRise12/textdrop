@@ -8,15 +8,20 @@ Push в `master` запускает тесты и сборку Docker. Посл�
 
 ## 1. Репозиторий
 
-Создайте пустой приватный репозиторий GitHub без README. Подключите его через обычный SSH Git (замените LOGIN):
+Репозиторий проекта: https://github.com/DarkRise12/textdrop. Remote `origin` настроен на HTTPS. Для первой отправки авторизуйтесь в обычной SSH-сессии:
 
 ```bash
+sudo apt update
+sudo apt install gh
+gh auth login --hostname github.com --git-protocol https --web
+gh auth setup-git
 cd ~/textdrop
-git remote add origin git@github.com:LOGIN/textdrop.git
 git push -u origin master
 ```
 
-Нужен авторизованный Git-доступ на машине, выполняющей push. Первая публикация запустит только тесты: автодеплой выключен по умолчанию.
+Откройте показанный CLI адрес в браузере и введите одноразовый код там. Авторизация выполняется напрямую в GitHub, без передачи токенов в чат. Если remote ещё не настроен в вашей копии, сначала выполните `git remote add origin https://github.com/DarkRise12/textdrop.git`.
+
+Первая публикация запустит только тесты: автодеплой выключен по умолчанию. Для подключения workflow требуются разрешения вашей GitHub-авторизации на запись кода и workflows.
 
 ## 2. Однократная установка на сервере
 
