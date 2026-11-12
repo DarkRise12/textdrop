@@ -16,11 +16,12 @@ docker network inspect caddy_default --format '{{.Driver}}'
 ```bash
 cd ~/textdrop
 python3 deploy/setup-docker-secrets.py
+python3 deploy/setup-docker-secrets.py --check
 docker compose up -d --build
 docker compose ps
 ```
 
-По умолчанию используется сеть `caddy_default`; для другой сети задайте `CADDY_NETWORK`. Скрипт спрашивает пароль интерактивно и не перезаписывает секреты. Приложение работает без root, хранит SQLite в именованном томе и не публикует порт 8765 на хосте. Caddy обращается к нему по имени `textdrop-share` в общей сети.
+По умолчанию используется сеть `caddy_default`; для другой сети задайте `CADDY_NETWORK`. Скрипт спрашивает пароль интерактивно и не перезаписывает секреты. Повторный запуск создаёт только недостающие файлы, в том числе после прерванной настройки. Проверка `--check` не создаёт и не меняет секреты. Приложение работает без root, хранит SQLite в именованном томе и не публикует порт 8765 на хосте. Caddy обращается к нему по имени `textdrop-share` в общей сети.
 
 Чтобы найти действующий Caddyfile на хосте, посмотрите bind mounts:
 
