@@ -73,7 +73,7 @@ fs.mkdirSync(captures,{recursive:true});
  assert(await page.locator('#text').evaluate(e=>e.clientHeight<=180));
  assert(await page.locator('#history').evaluate(e=>e.clientHeight>100));
  await page.locator('#text').fill('');await page.setViewportSize({width:390,height:420});
- assert(await page.locator('#compose').evaluate(e=>e.getBoundingClientRect().bottom<=innerHeight));
+ await page.waitForFunction(()=>document.getElementById('compose').getBoundingClientRect().bottom<=innerHeight);
  // Unauthenticated screen and theme under the same CSP.
  await page.route('http://textdrop.test/api/session',r=>r.fulfill({json:{authenticated:false}}));
  await page.reload();await page.locator('#login').waitFor();assert(await page.locator('#theme-toggle').isVisible());

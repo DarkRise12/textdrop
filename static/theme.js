@@ -6,7 +6,7 @@
   const system = matchMedia('(prefers-color-scheme: dark)');
   const apply = theme => {
     document.documentElement.dataset.theme = theme;
-    document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#141c19' : '#f2f5f3';
+    document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#17131d' : '#f5f3f8';
   };
   apply(saved === 'light' || saved === 'dark' ? saved : system.matches ? 'dark' : 'light');
   system.addEventListener('change', event => { if (!saved) apply(event.matches ? 'dark' : 'light'); });

@@ -2,18 +2,18 @@
 name: Textdrop
 description: Personal text chat across devices
 colors:
-  primary: "#296244"
-  background: "#f2f5f3"
+  primary: "#733bb8"
+  background: "#f5f3f8"
   paper: "#ffffff"
-  ink: "#242d28"
-  muted: "#626b64"
-  bubble: "#e3eee6"
-  dark-background: "#141c19"
-  dark-paper: "#1c2721"
-  dark-ink: "#e7efe9"
-  dark-muted: "#a4b5a9"
-  dark-primary: "#acd4b5"
-  dark-bubble: "#293f31"
+  ink: "#2b2433"
+  muted: "#6b6176"
+  bubble: "#ede5f7"
+  dark-background: "#17131d"
+  dark-paper: "#211b29"
+  dark-ink: "#f0eaf5"
+  dark-muted: "#b9acc7"
+  dark-primary: "#733bb8"
+  dark-bubble: "#31233f"
 rounded:
   control: "10px"
   message: "14px"
@@ -27,7 +27,7 @@ spacing:
 
 ## Overview
 
-Operate mode: a personal chat, explicitly requested by the owner. Preserve the green accent and quiet surfaces. No decorative imagery. The history occupies available space above the bottom composer.
+Operate mode: a personal chat, explicitly requested by the owner. Use the owner-selected purple accent #733bb8 with quiet violet-tinted surfaces. No decorative imagery. The history occupies available space above the bottom composer.
 
 ## Colors
 
