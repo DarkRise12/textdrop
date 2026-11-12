@@ -55,6 +55,7 @@ Right-aligned message bubbles have 14px corners and a 4px lower-right corner. Co
 - Composer: grows to 180px maximum, leaves history visible, disables empty submissions. Enter adds a line; Ctrl/Cmd+Enter sends, except during IME composition. Keep text after a failed send.
 - Search: remains above history; sending clears the filter so the saved message is visible.
 - Actions: copy and delete remain visible on mobile. Destructive deletion uses the existing confirmation dialog.
+- Header: wordmark reads `text->drop`, with the arrow in accent ink. Theme control has a tinted outlined surface; logout is a solid accent button. The chat header shows message count and sync status, with no Saved Messages title.
 - Theme: visible on both login and chat screens; accessible name announces the destination theme. Focus remains visible and reduced-motion preference suppresses transitions.
 
 ## Do's and Don'ts

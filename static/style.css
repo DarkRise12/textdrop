@@ -27,9 +27,14 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .quiet:hover { background: var(--hover); color: var(--ink); }
 .top { flex-shrink: 0; display: flex; align-items: center; gap: 24px; min-height: 72px; padding: 12px max(24px, calc((100vw - 1120px) / 2)); border-bottom: 1px solid var(--line); background: var(--paper); }
 .brand { color: var(--ink); text-decoration: none; font-size: 25px; font-weight: 750; letter-spacing: -.035em; display: flex; align-items: center; gap: 5px; }
-.brand-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-top: 13px; }
+.brand-arrow { color: var(--accent-ink); font-weight: 600; letter-spacing: -.06em; margin-inline: 1px; }
 .tagline { font-size: 13px; color: var(--muted); }
-.top-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.top-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.header-button { min-height: 44px; padding: 10px 14px; border: 1px solid var(--bubble-line); background: var(--bubble); color: var(--accent-ink); font-size: 14px; }
+.header-button:hover { background: var(--hover); border-color: var(--accent-ink); }
+#logout { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+#logout:hover { background: var(--accent-hover); }
+.message-count { margin-bottom: 5px; font-size: 14px; font-weight: 600; }
 .theme-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .sun, [data-theme="dark"] .moon { display: none; }
 [data-theme="dark"] .sun { display: block; }
@@ -94,7 +99,7 @@ dialog p { margin: 16px 0 24px; }
   .top { min-height: 60px; padding: 8px 16px; gap: 12px; }
   .brand { font-size: 23px; }
   .tagline, #theme-label { display: none; }
-  .top-actions { gap: 2px; }
+  .top-actions { gap: 8px; }
   .theme-toggle { padding: 10px; }
   #workspace { border: 0; }
   .chat-header { padding: 14px 16px; flex-wrap: wrap; gap: 8px; }
