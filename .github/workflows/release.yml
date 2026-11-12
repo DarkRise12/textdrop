@@ -57,7 +57,7 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/textdrop
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/textdrop ~/.ssh/known_hosts
-          docker save "textdrop-release:$GITHUB_SHA" | ssh -i ~/.ssh/textdrop \
+          docker save "textdrop-release:$GITHUB_SHA" | gzip -1 | ssh -i ~/.ssh/textdrop \
             -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
             -p "${DEPLOY_PORT:-22}" "$DEPLOY_USER@$DEPLOY_HOST" \
             "sudo -n /usr/local/sbin/textdrop-deploy $GITHUB_SHA"
