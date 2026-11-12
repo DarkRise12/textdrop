@@ -51,7 +51,7 @@ fs.mkdirSync(captures,{recursive:true});
  await page.locator('#notice').waitFor();assert.equal(await page.locator('#text').inputValue(),'Не потерять при ошибке');failSend=false;
  await page.locator('#text').fill('');await page.locator('.note').last().getByText('Удалить',{exact:true}).click();
  await page.getByRole('button',{name:'Оставить',exact:true}).click();assert(await page.locator('.note-text').last().textContent().then(x=>x.includes('<script>')));
- await page.locator('.note').last().getByText('Удалить',{exact:true}).click();await page.locator('dialog').getByRole('button',{name:'Удалить',exact:true}).click();
+ await page.locator('.note').last().getByText('Удалить',{exact:true}).click();await page.locator('dialog').getByRole('button',{name:'В корзину',exact:true}).click();
  await page.waitForFunction(()=>!document.querySelector('.note:last-child').textContent.includes('<script>'));
  await page.locator('#theme-toggle').click();assert.equal(await page.locator('html').getAttribute('data-theme'),'dark');
  await page.reload();await page.locator('.note').last().waitFor();assert.equal(await page.locator('html').getAttribute('data-theme'),'dark');

@@ -16,3 +16,7 @@ Initial scope: text only. Deploy on this server. Commit each functional addition
 
 ## Open Implementation Assumptions
 Single shared password, Python standard library and SQLite, responsive browser interface, polling synchronization. These choices implement the requested first version; they are not confirmed long-term product requirements. The owner confirmed successful cross-device use at https://share.nikitalebe.dev, behind the existing Docker Caddy container caddy-caddy-1 on caddy_default.
+
+## Scope Decisions
+
+Message pinning is explicitly excluded by the owner. Deleted messages are recoverable in a 30-day trash. HTTP/HTTPS links are clickable without interpreting user HTML.

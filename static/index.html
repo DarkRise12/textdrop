@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="theme-color" content="#f5f3f8"><title>Textdrop — текст под рукой</title>
-<script src="/theme.js"></script><link rel="stylesheet" href="/style.css"><script src="/draft.js" defer></script><script src="/editor.js" defer></script><script src="/app.js" defer></script>
+<script src="/theme.js"></script><link rel="stylesheet" href="/style.css"><script src="/draft.js" defer></script><script src="/links.js" defer></script><script src="/editor.js" defer></script><script src="/app.js" defer></script>
 </head>
 <body>
 <header class="top">
@@ -11,16 +11,17 @@
 </header>
 <main>
 <section id="login" hidden class="login"><h1>Твой текст.<br>На любом устройстве.</h1><p>Войди, чтобы открыть свой чат.</p><form id="login-form"><label for="password">Пароль</label><input id="password" type="password" autocomplete="current-password" required minlength="12"><button type="submit">Открыть чат</button></form></section>
-<section id="workspace" hidden aria-label="Личный чат">
-<div class="chat-header"><div class="chat-identity"><div class="chat-avatar" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1Z"/></svg></div><div><h1 class="sr-only">Личный чат</h1><div class="message-count">Всего сообщений: <span id="count">0</span></div><span id="connection" role="status">Подключаемся…</span></div></div><label class="search-label"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><span class="sr-only">Поиск по сообщениям</span><input id="search" type="search" placeholder="Поиск сообщений…"></label></div>
+<section id="workspace" data-view="chat" hidden aria-label="Личный чат">
+<nav class="view-switch" aria-label="Разделы"><button id="view-chat" type="button" aria-pressed="true">Чат</button><button id="view-trash" type="button" aria-pressed="false">Корзина</button></nav>
+<div class="chat-header"><div class="chat-identity"><div class="chat-avatar" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1Z"/></svg></div><div><h1 class="sr-only">Личный чат</h1><div class="message-count"><span id="count-label">Всего сообщений:</span> <span id="count">0</span></div><span id="connection" role="status">Подключаемся…</span></div></div><label class="search-label"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><span class="sr-only">Поиск по сообщениям</span><input id="search" type="search" placeholder="Поиск сообщений…"></label></div>
 <div class="history-wrap"><div id="history" class="history" tabindex="0" aria-label="История сообщений"><div class="history-content">
 <div id="empty" class="empty" hidden><div class="empty-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1Z"/></svg></div><h2>Чат с собой</h2><p>Отправь текст здесь.<br>Он будет под рукой на любом устройстве.</p></div>
 <div id="no-results" class="empty" hidden><h2>Ничего не найдено</h2><p>Попробуй другой поисковый запрос.</p></div>
 <div id="notes" aria-label="Сообщения"></div></div></div><button id="latest" type="button" class="latest" hidden>К новым сообщениям <span aria-hidden="true">↓</span></button></div>
 <div class="composer-area"><div class="feedback"><p id="notice" role="status" aria-live="polite" hidden></p><button id="retry" hidden class="quiet" type="button">Повторить подключение</button></div>
-<form id="compose" class="composer"><label for="text" class="sr-only">Сообщение</label><textarea id="text" maxlength="100000" rows="1" placeholder="Напиши сообщение…" required></textarea><button id="send" type="submit" aria-label="Отправить сообщение"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button></form><p id="draft-status" class="draft-status" role="status" hidden></p><div class="compose-footer"><span>Enter — новая строка</span><span>Ctrl / ⌘ + Enter — отправить</span></div></div>
+<p id="trash-hint" class="trash-hint" hidden>Сообщения хранятся в корзине 30 дней. После этого восстановить их нельзя.</p><div id="compose-controls"><form id="compose" class="composer"><label for="text" class="sr-only">Сообщение</label><textarea id="text" maxlength="100000" rows="1" placeholder="Напиши сообщение…" required></textarea><button id="send" type="submit" aria-label="Отправить сообщение"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button></form><p id="draft-status" class="draft-status" role="status" hidden></p><div class="compose-footer"><span>Enter — новая строка</span><span>Ctrl / ⌘ + Enter — отправить</span></div></div></div>
 </section>
 <div id="login-feedback" class="login-feedback" role="status" hidden></div><button id="login-retry" class="quiet login-retry" type="button" hidden>Повторить подключение</button>
 </main>
-<dialog id="delete-dialog"><form method="dialog"><h2>Удалить сообщение?</h2><p>Оно исчезнет на всех устройствах. Отменить удаление не получится.</p><div class="dialog-actions"><button value="cancel" class="quiet">Оставить</button><button value="delete" class="danger">Удалить</button></div></form></dialog>
+<dialog id="delete-dialog"><form method="dialog"><h2>Удалить сообщение?</h2><p>Оно исчезнет на всех устройствах. Сообщение можно восстановить из корзины в течение 30 дней.</p><div class="dialog-actions"><button value="cancel" class="quiet">Оставить</button><button value="delete" class="danger">Удалить</button></div></form></dialog>
 </body></html>

@@ -2,9 +2,11 @@
 const $ = id => document.getElementById(id);
 let notes = [], loading = false, generation = 0, online = false;
 let editor = null;
+let view = 'chat', syncAgain = false, viewLoaded = false;
 let noticeKind = '';
 const notice = (message, kind = '') => {
   noticeKind = kind;
+  $('notice').classList.toggle('success', kind === 'success');
   $('notice').textContent = message;
   $('notice').hidden = !message;
   $('login-feedback').textContent = message;
@@ -87,7 +89,8 @@ function session(active) {
     if (!draftReady) restoreDraft();
     requestAnimationFrame(resizeInput);
   }
-  if (!active) { online = false; notes = []; $('notes').replaceChildren(); $('latest').hidden = true; }
+  if (!active && $('delete-dialog').open) $('delete-dialog').close('cancel');
+  if (!active) { online = false; viewLoaded = false; notes = []; $('notes').replaceChildren(); $('latest').hidden = true; }
 }
 function apiError(message, status, kind) {
   return Object.assign(new Error(message), {status, kind});
@@ -127,6 +130,8 @@ async function api(path, method = 'GET', body) {
   }
   const valid = path === 'session' ? typeof data?.authenticated === 'boolean'
     : path === 'notes' && method === 'GET' ? Array.isArray(data) && data.every(isNote)
+    : path === 'trash' && method === 'GET' ? Array.isArray(data) && data.every(note => isNote(note) && Number.isFinite(note.deleted) && !Number.isNaN(new Date(note.deleted).getTime()) && Number.isFinite(note.expires) && !Number.isNaN(new Date(note.expires).getTime()))
+    : path.startsWith('trash/') && method === 'POST' ? isNote(data)
     : path === 'notes' && method === 'POST' ? isNote(data)
     : path.startsWith('notes/') && method === 'PATCH' ? isNote(data) && Number.isInteger(data.version)
     : data?.ok === true;
@@ -135,6 +140,72 @@ async function api(path, method = 'GET', body) {
 }
 function errorMessage(error) {
   return error.message || 'Не удалось выполнить действие. Попробуй снова.';
+}
+function configureView() {
+  const inTrash = view === 'trash';
+  $('workspace').dataset.view = view;
+  $('workspace').setAttribute('aria-label', inTrash ? 'Корзина сообщений' : 'Личный чат');
+  $('history').setAttribute('aria-label', inTrash ? 'Удалённые сообщения' : 'История сообщений');
+  $('count-label').textContent = inTrash ? 'В корзине:' : 'Всего сообщений:';
+  $('view-chat').setAttribute('aria-pressed', String(!inTrash));
+  $('view-trash').setAttribute('aria-pressed', String(inTrash));
+  $('compose-controls').hidden = inTrash;
+  $('trash-hint').hidden = !inTrash;
+  $('empty').querySelector('h2').textContent = inTrash ? 'Корзина пуста' : 'Чат с собой';
+  $('empty').querySelector('p').textContent = inTrash ? 'Удалённые сообщения появятся здесь. Их можно восстановить в течение 30 дней.' : 'Отправь текст здесь. Он будет под рукой на любом устройстве.';
+  $('empty').querySelector('.empty-mark').hidden = inTrash;
+}
+function switchView(next) {
+  if (view === next) return;
+  if (editor) { notice('Сохрани или отмени правки перед переходом в другой раздел.', 'edit'); editor.field.focus(); return; }
+  generation++;
+  view = next;
+  viewLoaded = false;
+  notes = [];
+  online = false;
+  $('search').value = '';
+  $('latest').hidden = true;
+  $('connection').textContent = 'Загружаем…';
+  notice('');
+  configureView(); render({searchChanged: true});
+  sync();
+}
+$('view-chat').onclick = () => switchView('chat');
+$('view-trash').onclick = () => switchView('trash');
+async function restoreMessage(note, button) {
+  const from = view;
+  button.disabled = true;
+  try {
+    await api('trash/' + note.id + '/restore', 'POST', {});
+    generation++;
+    if (view === from && !$('workspace').hidden) {
+      notes = notes.filter(item => item.id !== note.id); render();
+      notice('Сообщение восстановлено в чат.', 'success');
+    }
+    await sync();
+  } catch (error) { notice(errorMessage(error)); button.disabled = false; sync(); }
+}
+function confirmRemoval(note, permanent, button) {
+  const from = view;
+  const dialog = $('delete-dialog');
+  dialog.querySelector('h2').textContent = permanent ? 'Удалить сообщение навсегда?' : 'Переместить сообщение в корзину?';
+  dialog.querySelector('p').textContent = permanent ? 'Оно будет удалено окончательно. Восстановить его не получится.' : 'Сообщение исчезнет из чата. Его можно восстановить в течение 30 дней.';
+  dialog.querySelector('button[value="delete"]').textContent = permanent ? 'Удалить навсегда' : 'В корзину';
+  dialog.returnValue = ''; dialog.showModal();
+  dialog.onclose = async () => {
+    if (dialog.returnValue !== 'delete') return;
+    button.disabled = true;
+    try {
+      await api((permanent ? 'trash/' : 'notes/') + note.id, 'DELETE');
+      generation++;
+      if (view === from && !$('workspace').hidden) {
+        notes = notes.filter(item => item.id !== note.id); render();
+        notice(permanent ? 'Сообщение удалено окончательно.' : 'Сообщение перемещено в корзину на 30 дней.', 'success');
+      }
+      await sync();
+    } catch (error) { notice(errorMessage(error)); sync(); }
+    finally { button.disabled = false; }
+  };
 }
 function focusMessageAction(id) {
   const item = [...$('notes').querySelectorAll('.note')].find(note => note.dataset.id === id);
@@ -190,28 +261,28 @@ function render({forceBottom = false, searchChanged = false} = {}) {
   const query = $('search').value.toLocaleLowerCase();
   const visible = notes.slice();
   if (editor && !visible.some(note => note.id === editor.id)) visible.push(editor.note);
-  const filtered = visible.filter(n => n.id === editor?.id || n.text.toLocaleLowerCase().includes(query))
-    .sort((a, b) => b.created - a.created).reverse();
+  let filtered = visible.filter(n => n.id === editor?.id || n.text.toLocaleLowerCase().includes(query));
+  filtered = view === 'trash' ? filtered.sort((a, b) => b.deleted - a.deleted) : filtered.sort((a, b) => b.created - a.created).reverse();
   $('count').textContent = notes.length;
-  $('empty').hidden = notes.length > 0 || !!editor;
+  $('empty').hidden = !viewLoaded || notes.length > 0 || !!editor;
   $('no-results').hidden = !notes.length || filtered.length > 0;
   const fragment = document.createDocumentFragment();
   let previousDay = '';
   for (const note of filtered) {
-    const date = new Date(note.created);
+    const date = new Date(view === 'trash' ? note.deleted : note.created);
     const day = date.toLocaleDateString('ru');
     if (day !== previousDay) {
       const divider = document.createElement('div'); divider.className = 'day-divider';
-      divider.textContent = date.toLocaleDateString('ru', {day: 'numeric', month: 'long', year: 'numeric'});
+      divider.textContent = (view === 'trash' ? 'Удалено ' : '') + date.toLocaleDateString('ru', {day: 'numeric', month: 'long', year: 'numeric'});
       fragment.append(divider); previousDay = day;
     }
     const article = document.createElement('article'); article.className = 'note'; article.dataset.id = note.id;
     const meta = document.createElement('div'); meta.className = 'note-meta';
-    const time = document.createElement('time'); time.dateTime = new Date(note.created).toISOString();
-    time.textContent = new Intl.DateTimeFormat('ru', {hour:'2-digit', minute:'2-digit'}).format(note.created);
+    const time = document.createElement('time'); time.dateTime = date.toISOString();
+    time.textContent = new Intl.DateTimeFormat('ru', {hour:'2-digit', minute:'2-digit'}).format(date);
     time.title = date.toLocaleString('ru');
     const edited = document.createElement('span'); edited.className = 'edited-mark';
-    edited.textContent = note.updated ? ' · изменено' : '';
+    edited.textContent = note.updated && view === 'chat' ? ' · изменено' : '';
     if (note.updated) edited.title = 'Изменено ' + new Date(note.updated).toLocaleString('ru');
     time.append(edited);
     const actions = document.createElement('div'); actions.className = 'note-actions';
@@ -221,19 +292,20 @@ function render({forceBottom = false, searchChanged = false} = {}) {
       catch { notice('Не удалось скопировать. Выдели текст и скопируй вручную. Для кнопки нужен HTTPS.'); }
     };
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'quiet'; remove.textContent = 'Удалить'; remove.dataset.action = 'delete';
-    remove.onclick = () => {
-      const dialog = $('delete-dialog'); dialog.returnValue = ''; dialog.showModal();
-      dialog.onclose = async () => {
-        if (dialog.returnValue !== 'delete') return;
-        remove.disabled = true;
-        try { await api('notes/' + note.id, 'DELETE'); generation++; notes = notes.filter(item => item.id !== note.id); render(); notice(''); await sync(); }
-        catch (error) { notice(errorMessage(error)); remove.disabled = false; }
-      };
-    };
+    remove.textContent = view === 'trash' ? 'Удалить навсегда' : 'Удалить';
+    remove.onclick = () => confirmRemoval(note, view === 'trash', remove);
     const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'quiet';
     edit.textContent = 'Изменить'; edit.dataset.action = 'edit'; edit.onclick = () => beginEdit(note);
-    actions.append(copy, edit, remove); meta.append(time, actions);
-    const text = document.createElement('pre'); text.className = 'note-text'; text.textContent = note.text;
+    if (view === 'trash') {
+      const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'quiet';
+      restore.textContent = 'Восстановить'; restore.dataset.action = 'restore';
+      restore.onclick = () => restoreMessage(note, restore);
+      actions.append(copy, restore, remove);
+      const expires = document.createElement('span'); expires.className = 'trash-expiry';
+      expires.textContent = 'Удалится ' + new Date(note.expires).toLocaleString('ru', {day:'numeric', month:'long', hour:'2-digit', minute:'2-digit'});
+      meta.append(expires, actions);
+    } else { actions.append(copy, edit, remove); meta.append(time, actions); }
+    const text = document.createElement('pre'); text.className = 'note-text'; window.TextdropLinks.append(text, note.text);
     if (editor?.id === note.id) {
       article.classList.add('note-editing');
       actions.hidden = true;
@@ -242,7 +314,8 @@ function render({forceBottom = false, searchChanged = false} = {}) {
     fragment.append(article);
   }
   $('notes').replaceChildren(fragment);
-  if (forceBottom || (!searchChanged && nearBottom)) latest();
+  if (view === 'trash') { history.scrollTop = searchChanged ? 0 : previousTop; $('latest').hidden = true; }
+  else if (forceBottom || (!searchChanged && nearBottom)) latest();
   else if (searchChanged) { history.scrollTop = query ? 0 : history.scrollHeight; $('latest').hidden = true; }
   else {
     const restored = [...$('notes').querySelectorAll('.note')].find(item => item.dataset.id === anchorId);
@@ -256,11 +329,12 @@ function render({forceBottom = false, searchChanged = false} = {}) {
   }
 }
 async function sync() {
-  if ($('workspace').hidden || loading) return;
+  if ($('workspace').hidden) return;
+  if (loading) { syncAgain = true; return; }
   loading = true;
   const current = generation;
   try {
-    const data = await api('notes');
+    const data = await api(view === 'trash' ? 'trash' : 'notes');
     if (generation !== current) return;
     const changed = JSON.stringify(notes) !== JSON.stringify(data);
     const firstLoad = !online && !notes.length;
@@ -268,9 +342,10 @@ async function sync() {
     const added = data.some(note => !previousIds.has(note.id));
     const following = $('history').scrollHeight - $('history').scrollTop - $('history').clientHeight < 80;
     notes = data;
-    editor?.reconcile(data);
+    viewLoaded = true;
+    if (view === 'chat') editor?.reconcile(data);
     if (changed || !online) render({forceBottom: firstLoad && !$('search').value});
-    if (added && !firstLoad && !following && !$('search').value) $('latest').hidden = false;
+    if (view === 'chat' && added && !firstLoad && !following && !$('search').value) $('latest').hidden = false;
     if (noticeKind === 'sync' || noticeKind === 'start') notice('');
     online = true;
     $('connection').textContent = 'Синхронизировано'; $('retry').hidden = true;
@@ -282,7 +357,7 @@ async function sync() {
       : error.kind === 'timeout' ? 'Сервер не отвечает' : 'Нет соединения';
     $('retry').hidden = $('workspace').hidden;
     notice(errorMessage(error), 'sync');
-  } finally { loading = false; }
+  } finally { loading = false; if (syncAgain) { syncAgain = false; sync(); } }
 }
 $('login-form').onsubmit = async event => {
   event.preventDefault(); const button = event.submitter; button.disabled = true; notice('');
@@ -302,13 +377,14 @@ $('compose').onsubmit = async event => {
     const saved = await api('notes', 'POST', {text, request_id: sending.id});
     if (pendingSend === sending) pendingSend = null;
     generation++; // Ignore a poll that began before this message was saved.
-    notes = [saved, ...notes.filter(note => note.id !== saved.id)];
+    if (view === 'chat') notes = [saved, ...notes.filter(note => note.id !== saved.id)];
     if ($('text').value === text) $('text').value = '';
     saveDraft();
-    $('search').value = '';
     resizeInput();
-    render({forceBottom: true});
-    $('text').focus({preventScroll: true});
+    if (view === 'chat' && !$('workspace').hidden) {
+      $('search').value = ''; render({forceBottom: true});
+      $('text').focus({preventScroll: true});
+    }
     await sync();
   } catch (error) {
     if ([409, 410].includes(error.status) && pendingSend === sending) pendingSend = null;

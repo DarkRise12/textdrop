@@ -132,3 +132,15 @@ dialog p { margin: 16px 0 24px; }
 .edit-actions button, .edit-accept { min-height: 40px; font-size: 13px; padding: 10px 12px; }
 .edit-hint { margin-top: 10px; font-size: 12px; }
 @media (max-width: 600px) { .note-editing { max-width: 100%; } }
+
+.view-switch { display: flex; flex-shrink: 0; gap: 4px; padding: 8px 28px; background: var(--paper); border-bottom: 1px solid var(--line); }
+.view-switch button { min-height: 40px; padding: 9px 16px; background: transparent; color: var(--muted); font-size: 14px; }
+.view-switch button:hover { background: var(--hover); color: var(--ink); }
+.view-switch button[aria-pressed="true"] { color: var(--accent-ink); background: var(--bubble); }
+.note-text a, .note-text a:visited { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.note-text a:hover { text-decoration-thickness: 2px; }
+.trash-hint, .trash-expiry { color: var(--muted); font-size: 13px; }
+#notice.success { color: var(--accent-ink); }
+#workspace[data-view="trash"] #notes { margin-top: 0; align-items: stretch; }
+#workspace[data-view="trash"] .note { width: 100%; max-width: 100%; border-radius: 14px; }
+@media (max-width: 600px) { .view-switch { padding: 6px 12px; } }

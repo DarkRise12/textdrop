@@ -135,6 +135,7 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.request('GET', '/')[0], 200)
         self.assertEqual(self.request('GET', '/app.js')[0], 200)
         self.assertEqual(self.request('GET', '/editor.js')[0], 200)
+        self.assertEqual(self.request('GET', '/links.js')[0], 200)
         status, headers, script = self.request('GET', '/theme.js')
         self.assertEqual(status, 200)
         self.assertIn('text/javascript', headers)

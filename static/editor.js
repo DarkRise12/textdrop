@@ -44,10 +44,11 @@ class TextdropEditor {
     this.update();
   }
   reconcile(notes) {
-    if (this.closed || this.saving || this.deleted) return;
+    if (this.closed || this.saving) return;
     if (this.errorKind === 'auth') { this.error = ''; this.errorKind = ''; }
     const current = notes.find(note => note.id === this.id);
     if (!current) { this.deleted = true; this.update(); return; }
+    if (this.deleted) { this.deleted = false; this.error = ''; this.errorKind = ''; }
     if ((current.version ?? 0) > (this.note.version ?? 0) && (!this.remote || current.version >= this.remote.version)) this.remote = current;
     this.update();
   }
