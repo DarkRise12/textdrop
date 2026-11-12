@@ -2,6 +2,8 @@
 import io
 import json
 import tempfile
+import sqlite3
+from unittest.mock import patch
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -70,6 +72,21 @@ class HttpTests(unittest.TestCase):
         self.request('DELETE', '/api/notes/' + first[2]['id'], headers=auth)
         self.assertEqual(self.request('POST', '/api/notes', payload, auth)[0], 410)
         self.assertEqual(self.request('POST', '/api/notes', payload)[0], 401)
+
+    def test_database_errors_return_json_and_recovery_works(self):
+        auth = {'Cookie': 'session=' + self.app.token()}
+        original = self.app.store.add('keep')
+        with patch.object(self.app.store, 'notes', side_effect=sqlite3.OperationalError('private db path')):
+            status, headers, body = self.request('GET', '/api/notes', headers=auth)
+            self.assertEqual(status, 503)
+            self.assertIn('application/json', headers)
+            self.assertNotIn('private db path', body['error'])
+        self.assertEqual(self.request('GET', '/api/notes', headers=auth)[2], [original])
+        with patch.object(self.app.store, 'add', side_effect=sqlite3.OperationalError('private db path')):
+            status, _, body = self.request('POST', '/api/notes', {'text': 'later'}, auth)
+            self.assertEqual(status, 503)
+            self.assertNotIn('private db path', body['error'])
+        self.assertEqual(self.request('GET', '/api/notes', headers=auth)[2], [original])
 
     def test_input_origin_and_routes(self):
         auth = {'Cookie': 'session=' + self.app.token()}

@@ -51,6 +51,7 @@ Right-aligned message bubbles have 14px corners and a 4px lower-right corner. Co
 
 ## Components
 
+- Feedback: distinguish connectivity, server/protocol failure and authentication expiry. Preserve the last loaded history on failed reads. Clear load errors on recovery, keep failed-send feedback until the user acts. Offer retry on chat and login screens.
 - History: chronological messages grouped by local date. Follow new messages only when already near the bottom. Preserve the visible message anchor when reading older content; show a button to jump to new messages.
 - Composer: grows to 180px maximum, leaves history visible, disables empty submissions. Enter adds a line; Ctrl/Cmd+Enter sends, except during IME composition. Keep text after a failed send. Show a quiet local-draft status below the input, or an error-colored warning when browser storage is unavailable; draft contents never appear on the login screen.
 - Search: remains above history; sending clears the filter so the saved message is visible.

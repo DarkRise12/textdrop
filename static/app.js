@@ -1,7 +1,9 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let notes = [], loading = false, generation = 0, online = false;
-const notice = message => {
+let noticeKind = '';
+const notice = (message, kind = '') => {
+  noticeKind = kind;
   $('notice').textContent = message;
   $('notice').hidden = !message;
   $('login-feedback').textContent = message;
@@ -74,6 +76,8 @@ function session(active) {
   $('login').hidden = active;
   $('workspace').hidden = !active;
   $('logout').hidden = !active;
+  $('login-retry').hidden = true;
+  if (!active) $('connection').textContent = 'Требуется вход';
   $('login-feedback').hidden = active || !$('login-feedback').textContent;
   if (active) {
     if (!draftReady) restoreDraft();
@@ -81,24 +85,49 @@ function session(active) {
   }
   if (!active) { online = false; notes = []; $('notes').replaceChildren(); $('latest').hidden = true; }
 }
+function apiError(message, status, kind) {
+  return Object.assign(new Error(message), {status, kind});
+}
+function isNote(value) {
+  return value && typeof value.id === 'string' && typeof value.text === 'string' && Number.isFinite(value.created) && !Number.isNaN(new Date(value.created).getTime());
+}
 async function api(path, method = 'GET', body) {
-  const response = await fetch('/api/' + path, {
-    method, headers: body ? {'Content-Type': 'application/json'} : {},
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(15000)
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    if (response.status === 401 && path !== 'login') session(false);
-    const error = new Error(data.error || 'Ошибка сервера. Попробуй снова.');
-    error.status = response.status;
-    throw error;
+  const requestedAt = generation;
+  let response;
+  try {
+    response = await fetch('/api/' + path, {
+      method, headers: body ? {'Content-Type': 'application/json'} : {},
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(15000)
+    });
+  } catch (error) {
+    if (error.name === 'TimeoutError' || error.name === 'AbortError') {
+      throw apiError('Сервер не ответил вовремя. Попробуй снова.', 0, 'timeout');
+    }
+    throw apiError('Нет связи с сервером. Проверь подключение и попробуй снова.', 0, 'network');
   }
+  let data;
+  try { data = await response.json(); } catch { data = null; }
+  if (!response.ok) {
+    const kind = response.status === 401 ? 'auth' : response.status >= 500 ? 'server' : 'request';
+    if (response.status === 401 && path !== 'login' && requestedAt === generation) {
+      session(false);
+      notice('Сессия завершилась. Войди снова — черновик сохранён.', 'auth');
+    }
+    const fallback = response.status >= 500
+      ? 'Сервер временно недоступен. Повтори попытку чуть позже.'
+      : response.status === 401 ? 'Войди, чтобы продолжить.' : 'Не удалось выполнить действие. Попробуй снова.';
+    throw apiError(typeof data?.error === 'string' ? data.error : fallback, response.status, kind);
+  }
+  const valid = path === 'session' ? typeof data?.authenticated === 'boolean'
+    : path === 'notes' && method === 'GET' ? Array.isArray(data) && data.every(isNote)
+    : path === 'notes' && method === 'POST' ? isNote(data)
+    : data?.ok === true;
+  if (!valid) throw apiError('Сервер вернул некорректный ответ. Попробуй снова чуть позже.', response.status, 'protocol');
   return data;
 }
 function errorMessage(error) {
-  return error instanceof TypeError || error.name === 'TimeoutError'
-    ? 'Нет связи с сервером. Проверь подключение и попробуй снова.' : error.message;
+  return error.message || 'Не удалось выполнить действие. Попробуй снова.';
 }
 function render({forceBottom = false, searchChanged = false} = {}) {
   const history = $('history');
@@ -177,13 +206,17 @@ async function sync() {
     notes = data;
     if (changed || !online) render({forceBottom: firstLoad && !$('search').value});
     if (added && !firstLoad && !following && !$('search').value) $('latest').hidden = false;
-    if (!online) notice('');
+    if (noticeKind === 'sync' || noticeKind === 'start') notice('');
     online = true;
     $('connection').textContent = 'Синхронизировано'; $('retry').hidden = true;
   } catch (error) {
-    online = false; $('connection').textContent = 'Нет соединения';
+    if (current !== generation) return;
+    online = false;
+    $('connection').textContent = error.kind === 'server' ? 'Сервер недоступен'
+      : error.kind === 'protocol' ? 'Ошибка ответа сервера'
+      : error.kind === 'timeout' ? 'Сервер не отвечает' : 'Нет соединения';
     $('retry').hidden = $('workspace').hidden;
-    notice(errorMessage(error));
+    notice(errorMessage(error), 'sync');
   } finally { loading = false; }
 }
 $('login-form').onsubmit = async event => {
@@ -233,12 +266,29 @@ $('logout').onclick = async () => {
   catch (error) { notice(errorMessage(error)); }
 };
 $('search').oninput = () => render({searchChanged: true});
-$('retry').onclick = async () => { notice(''); await start(); };
+async function retryConnection(event) {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try { if ($('workspace').hidden) await start(); else await sync(); }
+  finally { button.disabled = false; }
+}
+$('retry').onclick = retryConnection;
+$('login-retry').onclick = retryConnection;
 async function start() {
-  try { const data = await api('session'); session(data.authenticated); $('retry').hidden = true; if (data.authenticated) await sync(); }
-  catch (error) { session(false); notice(errorMessage(error)); $('retry').hidden = false; }
+  const current = generation;
+  try {
+    const data = await api('session');
+    if (current !== generation) return;
+    if (noticeKind === 'start') notice('');
+    session(data.authenticated); $('retry').hidden = true;
+    if (data.authenticated) await sync();
+  } catch (error) {
+    if (current !== generation) return;
+    session(false); notice(errorMessage(error), 'start');
+    $('login-retry').hidden = false;
+  }
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });
-window.addEventListener('online', sync);
+window.addEventListener('online', () => { if ($('workspace').hidden) start(); else sync(); });
 setInterval(() => { if (!document.hidden) sync(); }, 3000);
 start();

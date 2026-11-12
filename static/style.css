@@ -88,6 +88,7 @@ textarea:focus { outline: 0; }
 .login p { margin: 18px 0 30px; }
 .login label { display: block; margin-bottom: 8px; font-size: 14px; }
 .login button { width: 100%; margin-top: 14px; }
+.login-retry { align-self: center; margin-bottom: 16px; }
 .login-feedback { text-align: center; padding: 12px 24px; }
 dialog { max-width: 440px; width: calc(100% - 40px); padding: 28px; border: 1px solid var(--line); border-radius: 14px; color: var(--ink); background: var(--paper); }
 dialog::backdrop { background: #100b19b3; }

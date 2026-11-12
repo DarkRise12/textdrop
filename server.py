@@ -121,7 +121,10 @@ class Handler(BaseHTTPRequestHandler):
             if not self.server.app.authenticated(self.headers.get('Cookie')):
                 return self.reply(401, {'error': 'Войдите, чтобы открыть записи.'})
             if path == '/api/notes':
-                return self.reply(200, self.server.app.store.notes())
+                try:
+                    return self.reply(200, self.server.app.store.notes())
+                except sqlite3.Error:
+                    return self.reply(503, {'error': 'Не удалось загрузить сообщения. Повторите попытку.'})
             return self.reply(404, {'error': 'Не найдено.'})
         files = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/theme.js': ('theme.js', 'text/javascript'), '/draft.js': ('draft.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
         if path not in files:
@@ -181,7 +184,7 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self.reply(400, {'error': str(exc)})
         except sqlite3.Error:
-            self.reply(503, {'error': 'Не удалось сохранить запись. Попробуйте снова.'})
+            self.reply(503, {'error': 'Не удалось сохранить изменения. Повторите попытку.'})
 
 
 def configuration_secret(name):
