@@ -88,6 +88,24 @@ class HttpTests(unittest.TestCase):
             self.assertNotIn('private db path', body['error'])
         self.assertEqual(self.request('GET', '/api/notes', headers=auth)[2], [original])
 
+    def test_edit_requires_auth_and_expected_version(self):
+        auth = {'Cookie': 'session=' + self.app.token()}
+        note = self.app.store.add('original')
+        path = '/api/notes/' + note['id']
+        body = {'text': 'Исправлено <script>', 'version': 0}
+        self.assertEqual(self.request('PATCH', path, body)[0], 401)
+        self.assertEqual(self.request('PATCH', path, body, dict(auth, Origin='https://evil.test'))[0], 403)
+        saved = self.request('PATCH', path, body, auth)
+        self.assertEqual(saved[0], 200)
+        self.assertEqual(saved[2]['text'], body['text'])
+        self.assertEqual(self.request('PATCH', path, body, auth)[2], saved[2])
+        status, _, conflict = self.request('PATCH', path, dict(body, text='different'), auth)
+        self.assertEqual(status, 409)
+        self.assertEqual(conflict['current'], saved[2])
+        self.assertEqual(self.request('PATCH', path, {'text': 'missing version'}, auth)[0], 400)
+        self.request('DELETE', path, headers=auth)
+        self.assertEqual(self.request('PATCH', path, dict(body, version=1), auth)[0], 410)
+
     def test_input_origin_and_routes(self):
         auth = {'Cookie': 'session=' + self.app.token()}
         self.assertEqual(self.request('POST', '/api/notes', {'text': ''}, auth)[0], 400)

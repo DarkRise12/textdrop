@@ -13,6 +13,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 LIMIT = 100_000
+NOTE_SELECT = '''SELECT n.id, n.text, n.created, COALESCE(v.version, 0) AS version,
+                 v.updated FROM notes n LEFT JOIN note_versions v ON v.note_id = n.id'''
 
 
 class RequestConflict(ValueError):
@@ -23,12 +25,20 @@ class RequestGone(ValueError):
     pass
 
 
+class EditConflict(RequestConflict):
+    def __init__(self, current):
+        super().__init__('Сообщение изменено на другом устройстве. Сравни версии перед сохранением.')
+        self.current = current
+
+
 class Store:
     def __init__(self, path):
         self.path = path
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, text TEXT NOT NULL, created INTEGER NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS send_requests (request_id TEXT PRIMARY KEY, note_id TEXT NOT NULL, text_hash TEXT NOT NULL)')
+            # Separate metadata keeps the original notes schema compatible with rollback.
+            db.execute('CREATE TABLE IF NOT EXISTS note_versions (note_id TEXT PRIMARY KEY, version INTEGER NOT NULL, updated INTEGER NOT NULL)')
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=10)
@@ -37,7 +47,7 @@ class Store:
 
     def notes(self):
         with self.connect() as db:
-            return [dict(row) for row in db.execute('SELECT * FROM notes ORDER BY created DESC, rowid DESC')]
+            return [dict(row) for row in db.execute(NOTE_SELECT + ' ORDER BY n.created DESC, n.rowid DESC')]
 
     def add(self, text, request_id=None):
         if not isinstance(text, str) or not text.strip() or len(text) > LIMIT:
@@ -45,7 +55,7 @@ class Store:
         if request_id is not None and (not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{16,80}', request_id)):
             raise ValueError('Некорректный идентификатор отправки.')
         digest = hashlib.sha256(text.encode()).hexdigest()
-        note = dict(id=secrets.token_hex(16), text=text, created=int(time.time() * 1000))
+        note = dict(id=secrets.token_hex(16), text=text, created=int(time.time() * 1000), version=0, updated=None)
         with self.connect() as db:
             # Serializes check-and-insert across threads/processes, not just this App.
             db.execute('BEGIN IMMEDIATE')
@@ -54,7 +64,7 @@ class Store:
                 if previous:
                     if previous['text_hash'] != digest:
                         raise RequestConflict('Этот идентификатор уже использован для другого текста.')
-                    existing = db.execute('SELECT * FROM notes WHERE id = ?', (previous['note_id'],)).fetchone()
+                    existing = db.execute(NOTE_SELECT + ' WHERE n.id = ?', (previous['note_id'],)).fetchone()
                     if existing is None:
                         raise RequestGone('Сообщение уже было отправлено и удалено. Повтор не восстановит его.')
                     return dict(existing)
@@ -63,9 +73,36 @@ class Store:
                 db.execute('INSERT INTO send_requests VALUES (?, ?, ?)', (request_id, note['id'], digest))
         return note
 
+    def edit(self, note_id, text, version):
+        if not isinstance(text, str) or not text.strip() or len(text) > LIMIT:
+            raise ValueError('Введите текст длиной от 1 до 100 000 символов.')
+        if type(version) is not int or version < 0:
+            raise ValueError('Некорректная версия сообщения. Обнови историю и попробуй снова.')
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute(NOTE_SELECT + ' WHERE n.id = ?', (note_id,)).fetchone()
+            if row is None:
+                raise RequestGone('Сообщение удалено на другом устройстве. Правки не сохранены.')
+            current = dict(row)
+            if current['version'] != version:
+                # Acknowledgement may have been lost after the previous PATCH committed.
+                if current['version'] == version + 1 and current['text'] == text:
+                    return current
+                raise EditConflict(current)
+            if current['text'] == text:
+                return current
+            updated = max(int(time.time() * 1000), (current['updated'] or 0) + 1)
+            db.execute('UPDATE notes SET text = ? WHERE id = ?', (text, note_id))
+            db.execute('''INSERT INTO note_versions VALUES (?, ?, ?)
+                          ON CONFLICT(note_id) DO UPDATE SET version=excluded.version, updated=excluded.updated''',
+                       (note_id, version + 1, updated))
+            return dict(current, text=text, version=version + 1, updated=updated)
+
     def delete(self, note_id):
         with self.connect() as db:
-            return db.execute('DELETE FROM notes WHERE id = ?', (note_id,)).rowcount > 0
+            deleted = db.execute('DELETE FROM notes WHERE id = ?', (note_id,)).rowcount > 0
+            db.execute('DELETE FROM note_versions WHERE note_id = ?', (note_id,))
+            return deleted
 
 
 class App:
@@ -138,6 +175,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         self.mutate()
 
+    def do_PATCH(self):
+        self.mutate()
+
     def mutate(self):
         app = self.server.app
         # Reject cross-origin browser writes, including login/logout.
@@ -173,12 +213,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, {'ok': True}, self.session_cookie('', 0))
             if self.path == '/api/notes' and self.command == 'POST':
                 return self.reply(201, app.store.add(data.get('text'), data.get('request_id')))
+            if self.path.startswith('/api/notes/') and self.command == 'PATCH':
+                note = app.store.edit(self.path.removeprefix('/api/notes/'), data.get('text'), data.get('version'))
+                return self.reply(200, note)
             if self.path.startswith('/api/notes/') and self.command == 'DELETE':
                 deleted = app.store.delete(self.path.removeprefix('/api/notes/'))
                 return self.reply(200 if deleted else 404, {'ok': bool(deleted)})
             self.reply(404, {'error': 'Не найдено.'})
         except RequestConflict as exc:
-            self.reply(409, {'error': str(exc)})
+            body = {'error': str(exc)}
+            if isinstance(exc, EditConflict):
+                body['current'] = exc.current
+            self.reply(409, body)
         except RequestGone as exc:
             self.reply(410, {'error': str(exc)})
         except ValueError as exc:
