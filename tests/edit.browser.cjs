@@ -41,14 +41,14 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),asse
   // Force a genuinely stale save (not just a conflict already found by polling).
   await open(a);await form(a).getByRole('textbox').fill('Мой окончательный вариант');
   const stale=await (await ca.request.get(base+'/api/notes')).json();
-  await a.route('**/api/notes',route=>route.request().method()==='GET'?route.fulfill({json:stale}):route.continue());
+  await a.route('**/api/notes/changes?*',route=>route.fulfill({json:{items:[],removed:[],revision:Number(new URL(route.request().url()).searchParams.get('since')),has_more:false,total:stale.length,matched:stale.length}}));
   await sync(b);await open(b);await form(b).getByRole('textbox').fill('Телефон: версия 3');await form(b).getByRole('button',{name:'Сохранить',exact:true}).click();await form(b).waitFor({state:'hidden'});
   await form(a).getByRole('button',{name:'Сохранить',exact:true}).click();await form(a).getByRole('button',{name:'Сохранить мой вариант'}).waitFor();
   assert.equal(await form(a).getByRole('textbox').inputValue(),'Мой окончательный вариант');assert.equal((await read()).text,'Телефон: версия 3');
   // A second race must still conflict even after explicit overwrite was chosen.
   await open(b);await form(b).getByRole('textbox').fill('Телефон: версия 4');await form(b).getByRole('button',{name:'Сохранить',exact:true}).click();await form(b).waitFor({state:'hidden'});
   await form(a).getByRole('button',{name:'Сохранить мой вариант'}).click();await a.waitForFunction(()=>document.querySelector('.edit-remote-text').textContent==='Телефон: версия 4');
-  assert.equal((await read()).text,'Телефон: версия 4');await a.unroute('**/api/notes');
+  assert.equal((await read()).text,'Телефон: версия 4');await a.unroute('**/api/notes/changes?*');
   await form(a).getByRole('button',{name:'Сохранить мой вариант'}).click();await form(a).waitFor({state:'hidden'});assert.equal((await read()).text,'Мой окончательный вариант');
   // Lose an acknowledgement after commit; a retry must not create another revision.
   await open(a);await form(a).getByRole('textbox').fill('Повтор после потери ответа');

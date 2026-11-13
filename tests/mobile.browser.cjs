@@ -7,9 +7,10 @@ const {chromium}=require('playwright');const fs=require('node:fs'),path=require(
   const context=await browser.newContext({viewport:{width:390,height:844},colorScheme:'light'});
   await context.addInitScript(()=>Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{window.copiedText=text;}}}));
   const notes=Array.from({length:35},(_,i)=>({id:String(i),text:'Сообщение '+(i+1)+'. Текст, который нужно передать на другое устройство.',created:Date.now()-i*60000,version:0,updated:null}));
-  const trash=[{...notes[0],id:'trash-fixture',deleted:Date.now(),expires:Date.now()+30*86400000}];let failed=false;
+  const trash=[{...notes[0],id:'trash-fixture',deleted:Date.now(),expires:Date.now()+30*86400000}];let failed=false;const feed=require('./feed-fixture.cjs')(()=>notes,()=>trash);
   await context.route('http://textdrop.test/**',route=>{
    const pathname=new URL(route.request().url()).pathname;
+   const reply=feed(route.request());if(reply)return route.fulfill(failed&&pathname.startsWith('/api/notes/')?{status:503,json:{error:'Тестовый сбой'}}:reply);
    if(pathname==='/api/session')return route.fulfill({json:{authenticated:true}});
    if(pathname==='/api/notes')return route.fulfill(failed?{status:503,json:{error:'Тестовый сбой'}}:{json:notes});
    if(pathname==='/api/trash')return route.fulfill({json:trash});
@@ -33,12 +34,12 @@ const {chromium}=require('playwright');const fs=require('node:fs'),path=require(
   const last=page.locator('.note').last();await last.getByRole('button',{name:'Копировать',exact:true}).click();assert.equal(await page.evaluate(()=>window.copiedText),notes[0].text);assert(await last.getByRole('button',{name:'Скопировано',exact:true}).isVisible());
   await last.getByRole('button',{name:'Изменить',exact:true}).click();await page.getByRole('form',{name:'Редактирование сообщения'}).waitFor();await page.getByRole('button',{name:'Отмена',exact:true}).click();
   await page.getByRole('button',{name:'Открыть поиск',exact:true}).click();assert.equal(await page.locator('#search-toggle').getAttribute('aria-expanded'),'true');assert(await page.locator('#search').evaluate(e=>document.activeElement===e));
-  await page.locator('#search').fill('Сообщение 12.');assert.equal(await page.locator('.note').count(),1);
-  await page.locator('#search').press('Escape');assert(await page.locator('#search').isHidden());assert.equal(await page.locator('.note').count(),35);assert.equal(await page.locator('#search').inputValue(),'');
-  await page.getByRole('button',{name:'Открыть поиск',exact:true}).click();await page.locator('#search').fill('Сообщение 7.');await page.getByRole('button',{name:'Закрыть поиск',exact:true}).click();assert.equal(await page.locator('.note').count(),35);
+  await page.locator('#search').fill('Сообщение 12.');await page.waitForFunction(()=>viewLoaded&&!loading&&!searchTimer);assert.equal(await page.locator('.note').count(),1);
+  await page.locator('#search').press('Escape');await page.waitForFunction(()=>viewLoaded&&!loading&&!searchTimer);assert(await page.locator('#search').isHidden());assert.equal(await page.locator('.note').count(),35);assert.equal(await page.locator('#search').inputValue(),'');
+  await page.getByRole('button',{name:'Открыть поиск',exact:true}).click();await page.locator('#search').fill('Сообщение 7.');await page.getByRole('button',{name:'Закрыть поиск',exact:true}).click();await page.waitForFunction(()=>viewLoaded&&!loading&&!searchTimer);assert.equal(await page.locator('.note').count(),35);
   // Desktop shares the compact icons and collapsed search. Active queries survive resizing.
   await page.setViewportSize({width:1280,height:850});assert(await page.locator('#search').isHidden());assert(await page.locator('#search-toggle').isVisible());assert(await page.locator('.note').last().locator('.action-icon').first().isVisible());await page.locator('#search-toggle').click();
-  await page.locator('#search').fill('Сообщение 9.');await page.setViewportSize({width:390,height:844});await page.waitForFunction(()=>document.getElementById('search-toggle').getAttribute('aria-expanded')==='true');assert(await page.locator('#search').isVisible());assert.equal(await page.locator('.note').count(),1);await page.locator('#search').press('Escape');
+  await page.locator('#search').fill('Сообщение 9.');await page.setViewportSize({width:390,height:844});await page.waitForFunction(()=>document.getElementById('search-toggle').getAttribute('aria-expanded')==='true');assert(await page.locator('#search').isVisible());await page.waitForFunction(()=>viewLoaded&&!loading&&!searchTimer);assert.equal(await page.locator('.note').count(),1);await page.locator('#search').press('Escape');await page.waitForFunction(()=>viewLoaded&&!loading&&!searchTimer);
   // Status dot retains the full error and the recovery message for assistive tools.
   failed=true;await page.waitForFunction(()=>!loading);await page.evaluate(()=>sync());assert.equal(await page.locator('#connection').getAttribute('data-state'),'error');assert.equal(await page.locator('#connection').getAttribute('title'),'Сервер недоступен');assert(await page.locator('#notice').isVisible());
   failed=false;await page.evaluate(()=>sync());assert.equal(await page.locator('#connection').getAttribute('data-state'),'ready');assert(await page.locator('#notice').isHidden());

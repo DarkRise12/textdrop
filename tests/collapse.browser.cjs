@@ -28,8 +28,10 @@ const fs = require('node:fs'), path = require('node:path'), os = require('node:o
     ].reverse();
     const original = structuredClone(notes);
     const trash = [{...notes[0], deleted: now, expires: now + 30 * 86400000}];
+    const feed = require('./feed-fixture.cjs')(() => notes, () => trash);
     await context.route('http://textdrop.test/**', route => {
       const req = route.request(), pathname = new URL(req.url()).pathname;
+      const reply = feed(req); if (reply) return route.fulfill(reply);
       if (pathname === '/api/session') return route.fulfill({json: {authenticated: true}});
       if (pathname === '/api/notes') return route.fulfill({json: notes});
       if (pathname === '/api/trash') return route.fulfill({json: trash});
@@ -105,9 +107,10 @@ const fs = require('node:fs'), path = require('node:path'), os = require('node:o
     assert.equal(await page.evaluate(() => window.copiedText), longText);
     // Search reveals matches beyond the preview without changing the manual choice.
     await page.locator('#search-toggle').click(); await page.locator('#search').fill('Уникальный хвост');
+    await page.waitForFunction(() => viewLoaded && !loading && !searchTimer);
     assert.equal(await page.locator('.note').count(), 1);
     assert.equal(await body('long').textContent(), longText); assert(await toggle('long').isHidden());
-    await page.locator('#search').press('Escape'); assert.equal(await expanded('long'), 'false');
+    await page.locator('#search').press('Escape'); await page.waitForFunction(() => viewLoaded && !loading && !searchTimer); assert.equal(await expanded('long'), 'false');
     // Editing always starts with the original, full value, even from a collapsed message.
     await item('long').getByRole('button', {name: 'Изменить', exact: true}).click();
     const field = page.locator('[data-action="edit-text"]'); assert.equal(await field.inputValue(), longText);
@@ -115,7 +118,7 @@ const fs = require('node:fs'), path = require('node:path'), os = require('node:o
     assert.equal(await expanded('long'), 'false');
     await item('long').getByRole('button', {name: 'Изменить', exact: true}).click();
     await field.fill('Теперь коротко'); await page.getByRole('button', {name: 'Сохранить', exact: true}).click();
-    await page.waitForFunction(() => !document.querySelector('.note-editing'));
+    await page.waitForFunction(() => !loading && !document.querySelector('.note-editing'));
     assert.equal(await body('long').textContent(), 'Теперь коротко'); assert(await toggle('long').isHidden());
     // A remote edit invalidates the measured preview; the original text was never mutated.
     notes = structuredClone(original); await page.evaluate(() => sync());

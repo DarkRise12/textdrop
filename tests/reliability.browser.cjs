@@ -36,13 +36,13 @@ const fs=require('node:fs');const os=require('node:os');const path=require('node
    {status:502,contentType:'text/html',body:'<html>Bad gateway</html>'},
    {status:200,json:{broken:true}}
   ]){
-   await page.route('**/api/notes',route=>route.request().method()==='GET'?route.fulfill(failure):route.continue());
+   await page.route('**/api/notes/**',route=>route.request().method()==='GET'?route.fulfill(failure):route.continue());
    await page.evaluate(()=>sync());
    assert.equal(await page.locator('.note').count(),existingCount);
    assert.equal(await page.locator('#text').inputValue(),'Черновик при сбое чтения');
    assert(await page.locator('#notice').isVisible());
    assert(!/SyntaxError|Unexpected token|Bad gateway/.test(await page.locator('#notice').textContent()));
-   await page.unroute('**/api/notes');await page.evaluate(()=>sync());
+   await page.unroute('**/api/notes/**');await page.evaluate(()=>sync());
    assert(await page.locator('#notice').isHidden());
    assert.equal(await page.locator('#connection').textContent(),'Синхронизировано');
   }

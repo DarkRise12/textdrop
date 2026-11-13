@@ -194,3 +194,9 @@ input[type="search"] { min-height: 40px; }
 .message-toggle:hover { background: transparent; color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; }
 .message-toggle[aria-expanded="true"] { position: sticky; bottom: 0; z-index: 1; width: 100%; background: var(--bubble); }
 .latest { z-index: 2; }
+
+.page-controls { flex-shrink: 0; text-align: center; padding: 8px 0 12px; }
+.page-controls p { font-size: 12px; }
+.page-controls button { min-height: 40px; color: var(--accent-ink); font-size: 13px; }
+
+@media (max-width: 600px) { .count-suffix { display: none; } }

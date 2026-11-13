@@ -4,6 +4,9 @@ let notes = [], loading = false, generation = 0, online = false;
 let editor = null;
 let view = 'chat', syncAgain = false, viewLoaded = false;
 let noticeKind = '';
+let currentQuery = '', searchTimer = null, feedAbort = null;
+let nextPage = null, feedRevision = null, totalNotes = 0, matchedNotes = 0, loadedThrough = null;
+let olderLoading = false, lastHistoryScroll = 0;
 const expandedMessages = new Set(), messagePreviewCache = new Map();
 const notice = (message, kind = '') => {
   noticeKind = kind;
@@ -63,10 +66,16 @@ function resizeInput() {
 function latest() {
   $('history').scrollTop = $('history').scrollHeight;
   $('latest').hidden = true;
+  lastHistoryScroll = $('history').scrollTop;
 }
 $('latest').onclick = latest;
 $('history').onscroll = () => {
-  if ($('history').scrollHeight - $('history').scrollTop - $('history').clientHeight < 80) $('latest').hidden = true;
+  const history = $('history');
+  const bottom = history.scrollHeight - history.scrollTop - history.clientHeight;
+  if (bottom < 80) $('latest').hidden = true;
+  const towardOlder = view === 'chat' ? history.scrollTop < lastHistoryScroll : history.scrollTop > lastHistoryScroll;
+  lastHistoryScroll = history.scrollTop;
+  if (towardOlder && (view === 'chat' ? history.scrollTop < 100 : bottom < 100)) loadOlder();
 };
 $('text').oninput = () => { resizeInput(); saveDraft(); };
 window.addEventListener('pagehide', saveDraft);
@@ -91,7 +100,7 @@ function session(active) {
     requestAnimationFrame(resizeInput);
   }
   if (!active && $('delete-dialog').open) $('delete-dialog').close('cancel');
-  if (!active) { expandedMessages.clear(); messagePreviewCache.clear(); online = false; viewLoaded = false; notes = []; $('notes').replaceChildren(); $('latest').hidden = true; }
+  if (!active) { clearFeedState(); expandedMessages.clear(); messagePreviewCache.clear(); online = false; viewLoaded = false; notes = []; $('notes').replaceChildren(); $('latest').hidden = true; }
 }
 function apiError(message, status, kind) {
   return Object.assign(new Error(message), {status, kind});
@@ -99,14 +108,14 @@ function apiError(message, status, kind) {
 function isNote(value) {
   return value && typeof value.id === 'string' && typeof value.text === 'string' && Number.isFinite(value.created) && !Number.isNaN(new Date(value.created).getTime());
 }
-async function api(path, method = 'GET', body) {
+async function api(path, method = 'GET', body, signal) {
   const requestedAt = generation;
   let response;
   try {
     response = await fetch('/api/' + path, {
       method, headers: body ? {'Content-Type': 'application/json'} : {},
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(15000)
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000)
     });
   } catch (error) {
     if (error.name === 'TimeoutError' || error.name === 'AbortError') {
@@ -129,7 +138,19 @@ async function api(path, method = 'GET', body) {
     if (isNote(data?.current) && Number.isInteger(data.current.version)) error.current = data.current;
     throw error;
   }
-  const valid = path === 'session' ? typeof data?.authenticated === 'boolean'
+  const route = path.split('?')[0];
+  const feedRoute = /^(notes|trash)\/(page|changes)$/.test(route);
+  const counters = data && Number.isSafeInteger(data.total) && data.total >= 0
+    && Number.isSafeInteger(data.matched) && data.matched >= 0 && data.matched <= data.total
+    && Number.isSafeInteger(data.revision) && data.revision >= 0;
+  const records = Array.isArray(data?.items) && data.items.length <= 100 && data.items.every(note => isNote(note)
+    && (!route.startsWith('trash/') || (Number.isFinite(note.deleted) && Number.isFinite(note.expires))));
+  const valid = feedRoute ? (route.endsWith('/changes') && data?.reset === true) || counters && records
+    && (route.endsWith('/page') ? data.next === null || typeof data.next === 'string'
+      : typeof data.has_more === 'boolean' && Array.isArray(data.removed) && data.removed.every(id => typeof id === 'string')
+        && data.items.every(note => typeof note.matches === 'boolean'))
+    : /^notes\/[^/]+$/.test(route) && method === 'GET' ? isNote(data)
+    : path === 'session' ? typeof data?.authenticated === 'boolean'
     : path === 'notes' && method === 'GET' ? Array.isArray(data) && data.every(isNote)
     : path === 'trash' && method === 'GET' ? Array.isArray(data) && data.every(note => isNote(note) && Number.isFinite(note.deleted) && !Number.isNaN(new Date(note.deleted).getTime()) && Number.isFinite(note.expires) && !Number.isNaN(new Date(note.expires).getTime()))
     : path.startsWith('trash/') && method === 'POST' ? isNote(data)
@@ -151,7 +172,7 @@ function setSearchOpen(open, focus = false) {
   $('workspace-toolbar').classList.toggle('search-open', open);
   $('search-toggle').setAttribute('aria-expanded', String(open));
   $('search-toggle').setAttribute('aria-label', open ? 'Закрыть поиск' : 'Открыть поиск');
-  if (!open && $('search').value) { $('search').value = ''; render({searchChanged: true}); }
+  if (!open && $('search').value) { $('search').value = ''; changeSearch(''); }
   if (focus) (open ? $('search') : $('search-toggle')).focus({preventScroll: true});
 }
 $('search-toggle').onclick = () => setSearchOpen($('search-toggle').getAttribute('aria-expanded') !== 'true', true);
@@ -180,6 +201,7 @@ function switchView(next) {
   if (editor) { notice('Сохрани или отмени правки перед переходом в другой раздел.', 'edit'); editor.field.focus(); return; }
   generation++;
   view = next;
+  currentQuery = ''; clearFeedState();
   viewLoaded = false;
   notes = [];
   online = false;
@@ -335,7 +357,7 @@ function mountMessagePreview(article, text, note, searching) {
   };
   return update;
 }
-function render({forceBottom = false, searchChanged = false} = {}) {
+function render({forceBottom = false, searchChanged = false, preserveScroll = false} = {}) {
   const history = $('history');
   const nearBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 80;
   const previousTop = history.scrollTop;
@@ -346,14 +368,17 @@ function render({forceBottom = false, searchChanged = false} = {}) {
   const focusId = focused?.closest('.note')?.dataset.id;
   const focusAction = focused?.dataset.action;
   const selection = focusAction === 'edit-text' ? [focused.selectionStart, focused.selectionEnd] : null;
-  const query = $('search').value.toLocaleLowerCase();
+  const query = currentQuery;
   const visible = notes.slice();
   if (editor && !visible.some(note => note.id === editor.id)) visible.push(editor.note);
-  let filtered = visible.filter(n => n.id === editor?.id || n.text.toLocaleLowerCase().includes(query));
-  filtered = view === 'trash' ? filtered.sort((a, b) => b.deleted - a.deleted) : filtered.sort((a, b) => b.created - a.created).reverse();
-  $('count').textContent = notes.length;
-  $('empty').hidden = !viewLoaded || notes.length > 0 || !!editor;
-  $('no-results').hidden = !notes.length || filtered.length > 0;
+  const filtered = visible.sort((a, b) => compareNotes(b, a));
+  if (view === 'chat') filtered.reverse();
+  $('count').textContent = query ? matchedNotes : totalNotes;
+  $('count').title = 'Найдено: ' + matchedNotes + '. Всего: ' + totalNotes + '. Загружено: ' + notes.length;
+  $('count-label').textContent = query ? 'Найдено:' : view === 'trash' ? 'В корзине:' : 'Всего сообщений:';
+  $('empty').hidden = !viewLoaded || totalNotes > 0 || notes.length > 0 || !!editor;
+  $('no-results').hidden = !viewLoaded || !query || !totalNotes || matchedNotes > 0 || !!editor;
+  updatePageControls();
   const fragment = document.createDocumentFragment();
   const previews = [];
   const knownIds = new Set(visible.map(note => note.id));
@@ -413,13 +438,14 @@ function render({forceBottom = false, searchChanged = false} = {}) {
   }
   $('notes').replaceChildren(fragment);
   for (const update of previews) update();
-  if (view === 'trash') { history.scrollTop = searchChanged ? 0 : previousTop; $('latest').hidden = true; }
-  else if (forceBottom || (!searchChanged && nearBottom)) latest();
+  if (view === 'trash' && !preserveScroll) { history.scrollTop = searchChanged ? 0 : previousTop; $('latest').hidden = true; }
+  else if (!preserveScroll && (forceBottom || (!searchChanged && nearBottom))) latest();
   else if (searchChanged) { history.scrollTop = query ? 0 : history.scrollHeight; $('latest').hidden = true; }
   else {
     const restored = [...$('notes').querySelectorAll('.note')].find(item => item.dataset.id === anchorId);
-    history.scrollTop = restored ? previousTop + restored.getBoundingClientRect().top - anchorTop : previousTop;
+    history.scrollTop = restored ? history.scrollTop + restored.getBoundingClientRect().top - anchorTop : previousTop;
   }
+  lastHistoryScroll = history.scrollTop;
   if (focusId && focusAction) {
     const item = [...$('notes').querySelectorAll('.note')].find(node => node.dataset.id === focusId);
     const target = item?.querySelector(`[data-action="${focusAction}"]`);
@@ -434,37 +460,144 @@ new ResizeObserver(([entry]) => {
   historyWidth = width;
   if (viewLoaded && !$('workspace').hidden) render();
 }).observe($('history'));
+function compareNotes(a, b) {
+  const key = view === 'trash' ? 'deleted' : 'created';
+  return a[key] - b[key] || (a.id > b.id ? 1 : a.id < b.id ? -1 : 0);
+}
+function clearFeedState() {
+  feedAbort?.abort();
+  clearTimeout(searchTimer); searchTimer = null;
+  nextPage = null; feedRevision = null; loadedThrough = null;
+  totalNotes = 0; matchedNotes = 0;
+}
+function updatePageControls() {
+  $('page-controls').hidden = viewLoaded && !nextPage;
+  if (!nextPage && document.activeElement === $('load-more')) $('history').focus({preventScroll: true});
+  $('load-more').hidden = !nextPage;
+  $('load-more').disabled = loading;
+  $('load-more').textContent = olderLoading ? 'Загружаем…' : view === 'chat' ? 'Загрузить предыдущие' : 'Загрузить ещё';
+  $('page-status').textContent = !viewLoaded ? (currentQuery ? 'Ищем…' : 'Загружаем сообщения…')
+    : 'Показано ' + notes.length + ' из ' + matchedNotes;
+  const controls = $('page-controls'), content = controls.parentElement;
+  if (view === 'trash') { if (content.lastElementChild !== controls) content.append(controls); }
+  else if (content.firstElementChild !== controls) content.prepend(controls);
+}
+function feedPath(kind, cursor) {
+  const params = new URLSearchParams({limit: '50', q: currentQuery});
+  if (kind === 'changes') params.set('since', String(feedRevision));
+  else if (cursor) params.set('before', cursor);
+  return (view === 'trash' ? 'trash/' : 'notes/') + kind + '?' + params;
+}
+function changeSearch(query, delay = 0) {
+  generation++;
+  currentQuery = query.trim();
+  clearFeedState(); notes = []; viewLoaded = false; online = false;
+  $('latest').hidden = true;
+  if (noticeKind === 'sync') notice('');
+  render({searchChanged: true});
+  if (delay) searchTimer = setTimeout(() => { searchTimer = null; sync(); }, delay);
+  else sync();
+}
+function feedError(error) {
+  online = false;
+  setConnection(error.kind === 'server' ? 'Сервер недоступен'
+    : error.kind === 'protocol' ? 'Ошибка ответа сервера'
+    : error.kind === 'timeout' ? 'Сервер не отвечает' : 'Нет соединения', 'error');
+  $('retry').hidden = $('workspace').hidden;
+  notice(errorMessage(error), 'sync');
+}
 async function sync() {
-  if ($('workspace').hidden) return;
+  if ($('workspace').hidden || searchTimer) return;
   if (loading) { syncAgain = true; return; }
   loading = true;
   const current = generation;
+  feedAbort = new AbortController();
+  updatePageControls();
   try {
-    const data = await api(view === 'trash' ? 'trash' : 'notes');
-    if (generation !== current) return;
-    const changed = JSON.stringify(notes) !== JSON.stringify(data);
-    const firstLoad = !online && !notes.length;
-    const previousIds = new Set(notes.map(note => note.id));
-    const added = data.some(note => !previousIds.has(note.id));
-    const following = $('history').scrollHeight - $('history').scrollTop - $('history').clientHeight < 80;
-    notes = data;
-    viewLoaded = true;
-    if (view === 'chat') editor?.reconcile(data);
-    if (changed || !online) render({forceBottom: firstLoad && !$('search').value});
-    if (view === 'chat' && added && !firstLoad && !following && !$('search').value) $('latest').hidden = false;
+    if (feedRevision === null) {
+      const data = await api(feedPath('page'), 'GET', undefined, feedAbort.signal);
+      if (generation !== current) return;
+      // An editor may be outside the page or the new query. Absence is not deletion.
+      const watched = editor;
+      if (view === 'chat' && watched) {
+        let note;
+        try { note = await api('notes/' + watched.id, 'GET', undefined, feedAbort.signal); }
+        catch (error) { if (error.status !== 404) throw error; }
+        if (generation !== current) return;
+        if (editor === watched) watched.reconcile(note ? [note] : []);
+      }
+      notes = data.items; nextPage = data.next; feedRevision = data.revision;
+      loadedThrough = data.items.at(-1) || null;
+      totalNotes = data.total; matchedNotes = data.matched; viewLoaded = true;
+      render({forceBottom: !currentQuery, searchChanged: Boolean(currentQuery)});
+    } else {
+      // Bound each poll even after a long offline period; the next poll continues it.
+      for (let batch = 0; batch < 5; batch++) {
+        const data = await api(feedPath('changes'), 'GET', undefined, feedAbort.signal);
+        if (generation !== current) return;
+        if (data.reset) { changeSearch(currentQuery); return; }
+        if (data.revision < feedRevision || (data.has_more && data.revision === feedRevision)) {
+          throw apiError('Ошибка версии синхронизации. Повтори подключение.', 200, 'protocol');
+        }
+        const previous = JSON.stringify(notes);
+        const previousIds = new Set(notes.map(note => note.id));
+        const following = $('history').scrollHeight - $('history').scrollTop - $('history').clientHeight < 80;
+        if (editor && view === 'chat') {
+          const updated = data.items.find(note => note.id === editor.id);
+          if (updated) editor.reconcile([updated]);
+          else if (data.removed.includes(editor.id)) editor.reconcile([]);
+        }
+        const merged = new Map(notes.map(note => [note.id, note]));
+        for (const id of data.removed) merged.delete(id);
+        for (const changed of data.items) {
+          const {matches, ...note} = changed;
+          if (!matches) merged.delete(note.id);
+          else if (merged.has(note.id) || !nextPage || !loadedThrough || compareNotes(note, loadedThrough) >= 0) merged.set(note.id, note);
+        }
+        notes = [...merged.values()];
+        const countersChanged = totalNotes !== data.total || matchedNotes !== data.matched;
+        totalNotes = data.total; matchedNotes = data.matched; feedRevision = data.revision;
+        if (JSON.stringify(notes) !== previous || countersChanged || !online) render();
+        if (view === 'chat' && !following && !currentQuery && notes.some(note => !previousIds.has(note.id))) $('latest').hidden = false;
+        if (!data.has_more) break;
+      }
+    }
     if (noticeKind === 'sync' || noticeKind === 'start') notice('');
     online = true;
     setConnection('Синхронизировано', 'ready'); $('retry').hidden = true;
   } catch (error) {
     if (current !== generation) return;
-    online = false;
-    setConnection(error.kind === 'server' ? 'Сервер недоступен'
-      : error.kind === 'protocol' ? 'Ошибка ответа сервера'
-      : error.kind === 'timeout' ? 'Сервер не отвечает' : 'Нет соединения', 'error');
-    $('retry').hidden = $('workspace').hidden;
-    notice(errorMessage(error), 'sync');
-  } finally { loading = false; if (syncAgain) { syncAgain = false; sync(); } }
+    feedError(error);
+  } finally {
+    loading = false; feedAbort = null; updatePageControls();
+    if (syncAgain) { syncAgain = false; sync(); }
+  }
 }
+async function loadOlder() {
+  if (!nextPage || loading || !viewLoaded || $('workspace').hidden) return;
+  loading = true; olderLoading = true;
+  const current = generation;
+  feedAbort = new AbortController(); updatePageControls();
+  try {
+    const data = await api(feedPath('page', nextPage), 'GET', undefined, feedAbort.signal);
+    if (generation !== current) return;
+    // Preserve already loaded records if a mutation happened before this page snapshot.
+    const merged = new Map(notes.map(note => [note.id, note]));
+    for (const note of data.items) if (!merged.has(note.id)) merged.set(note.id, note);
+    notes = [...merged.values()]; nextPage = data.next;
+    loadedThrough = data.items.at(-1) || loadedThrough;
+    totalNotes = data.total; matchedNotes = data.matched;
+    render({preserveScroll: true});
+    syncAgain = true;
+  } catch (error) {
+    if (current !== generation) return;
+    feedError(error);
+  } finally {
+    loading = false; olderLoading = false; feedAbort = null; updatePageControls();
+    if (syncAgain) { syncAgain = false; sync(); }
+  }
+}
+$('load-more').onclick = loadOlder;
 $('login-form').onsubmit = async event => {
   event.preventDefault(); const button = event.submitter; button.disabled = true; notice('');
   try { await api('login', 'POST', {password: $('password').value}); $('password').value = ''; session(true); await sync(); }
@@ -488,6 +621,7 @@ $('compose').onsubmit = async event => {
     saveDraft();
     resizeInput();
     if (view === 'chat' && !$('workspace').hidden) {
+      if (currentQuery) { currentQuery = ''; clearFeedState(); viewLoaded = false; }
       $('search').value = ''; setSearchOpen(false); render({forceBottom: true});
       $('text').focus({preventScroll: true});
     }
@@ -514,7 +648,7 @@ $('logout').onclick = async () => {
   }
   catch (error) { notice(errorMessage(error)); }
 };
-$('search').oninput = () => render({searchChanged: true});
+$('search').oninput = () => changeSearch($('search').value, 250);
 async function retryConnection(event) {
   const button = event.currentTarget;
   button.disabled = true;

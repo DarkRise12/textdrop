@@ -1,4 +1,6 @@
 """Textdrop: private shared text storage, using Python's standard library."""
+import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -11,8 +13,13 @@ import time
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(__file__).resolve().parent
+PAGE_SIZE = 50
+PAGE_MAX = 100
+PAGE_BYTES = 900_000
+SEARCH_LIMIT = 256
 LIMIT = 100_000
 TRASH_LIFETIME = 30 * 24 * 60 * 60 * 1000
 NOTE_SELECT = '''SELECT n.id, n.text, n.created, COALESCE(v.version, 0) AS version,
@@ -45,15 +52,135 @@ class Store:
                 id TEXT PRIMARY KEY, text TEXT NOT NULL, created INTEGER NOT NULL,
                 version INTEGER NOT NULL, updated INTEGER, deleted INTEGER NOT NULL, expires INTEGER NOT NULL)''')
             db.execute('CREATE INDEX IF NOT EXISTS trash_expiry ON trash(expires)')
+            db.execute('CREATE INDEX IF NOT EXISTS notes_chronology ON notes(created DESC, id DESC)')
+            db.execute('CREATE INDEX IF NOT EXISTS trash_chronology ON trash(deleted DESC, id DESC)')
+            db.execute('CREATE TABLE IF NOT EXISTS sync_state (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), revision INTEGER NOT NULL)')
+            db.execute('INSERT OR IGNORE INTO sync_state VALUES (1, 0)')
+            db.execute('CREATE TABLE IF NOT EXISTS note_changes (note_id TEXT PRIMARY KEY, revision INTEGER NOT NULL)')
+            db.execute('CREATE INDEX IF NOT EXISTS changes_revision ON note_changes(revision)')
+            # Triggers also track writes from a previous app image after rollback.
+            # Only the most recent revision per ID is retained; no message text is duplicated.
+            for table in ('notes', 'trash'):
+                for event in ('INSERT', 'UPDATE', 'DELETE'):
+                    row = 'OLD' if event == 'DELETE' else 'NEW'
+                    db.execute(f'''CREATE TRIGGER IF NOT EXISTS feed_{table}_{event.lower()}
+                        AFTER {event} ON {table} BEGIN
+                        UPDATE sync_state SET revision = revision + 1 WHERE singleton = 1;
+                        INSERT INTO note_changes VALUES ({row}.id, (SELECT revision FROM sync_state))
+                        ON CONFLICT(note_id) DO UPDATE SET revision = excluded.revision;
+                        END''')
+
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=10)
         db.row_factory = sqlite3.Row
+        db.create_function('casefold', 1, str.casefold, deterministic=True)
         return db
 
     def notes(self):
         with self.connect() as db:
             return [dict(row) for row in db.execute(NOTE_SELECT + ' ORDER BY n.created DESC, n.rowid DESC')]
+
+    @staticmethod
+    def cursor(note, trash=False):
+        key = 'deleted' if trash else 'created'
+        return base64.urlsafe_b64encode(json.dumps([note[key], note['id']]).encode()).decode().rstrip('=')
+
+    @staticmethod
+    def parse_cursor(value):
+        try:
+            if not isinstance(value, str) or len(value) > 256:
+                raise ValueError()
+            raw = base64.b64decode(value + '=' * (-len(value) % 4), altchars=b'-_', validate=True)
+            key, note_id = json.loads(raw)
+            if type(key) is not int or not 0 <= key <= 2 ** 53 - 1 or not isinstance(note_id, str) or not 1 <= len(note_id) <= 80:
+                raise ValueError()
+            return key, note_id
+        except (ValueError, TypeError, UnicodeDecodeError, binascii.Error):
+            raise ValueError('Некорректный указатель страницы.') from None
+
+    @staticmethod
+    def feed_params(query, limit):
+        if not isinstance(query, str) or len(query) > SEARCH_LIMIT:
+            raise ValueError('Поисковый запрос должен быть не длиннее 256 символов.')
+        if type(limit) is not int or not 1 <= limit <= PAGE_MAX:
+            raise ValueError('Размер страницы должен быть от 1 до 100.')
+        return query.casefold()
+
+    @staticmethod
+    def feed_source(trash):
+        if trash:
+            return 'SELECT * FROM trash n', 'trash n', 'n.deleted'
+        return NOTE_SELECT, 'notes n', 'n.created'
+
+    @staticmethod
+    def feed_counts(db, table, query):
+        total = db.execute('SELECT count(*) FROM ' + table).fetchone()[0]
+        matched = db.execute('SELECT count(*) FROM ' + table + ' WHERE instr(casefold(n.text), ?) > 0', (query,)).fetchone()[0] if query else total
+        return {'total': total, 'matched': matched}
+
+    def page(self, query='', before=None, limit=PAGE_SIZE, trash=False):
+        query = self.feed_params(query, limit)
+        cursor = self.parse_cursor(before) if before is not None else None
+        if trash:
+            self.purge_expired()
+        select, table, key = self.feed_source(trash)
+        conditions, args = [], []
+        if query:
+            conditions.append('instr(casefold(n.text), ?) > 0'); args.append(query)
+        if cursor:
+            conditions.append(f'({key}, n.id) < (?, ?)'); args.extend(cursor)
+        where = ' WHERE ' + ' AND '.join(conditions) if conditions else ''
+        with self.connect() as db:
+            db.execute('BEGIN')  # Rows, counts and revision belong to the same snapshot.
+            revision = db.execute('SELECT revision FROM sync_state').fetchone()[0]
+            records = db.execute(select + where + f' ORDER BY {key} DESC, n.id DESC LIMIT ?', (*args, limit + 1))
+            items, size, more = [], 0, False
+            for row in records:
+                note = dict(row)
+                cost = len(json.dumps(note, ensure_ascii=False).encode()) + 2
+                if len(items) == limit or (items and size + cost > PAGE_BYTES):
+                    more = True
+                    break
+                items.append(note); size += cost
+            return dict(items=items, next=self.cursor(items[-1], trash) if more else None,
+                        revision=revision, **self.feed_counts(db, table, query))
+
+    def changes(self, since, query='', limit=PAGE_SIZE, trash=False):
+        query = self.feed_params(query, limit)
+        if type(since) is not int or not 0 <= since <= 2 ** 53 - 1:
+            raise ValueError('Некорректная версия синхронизации.')
+        if trash:
+            self.purge_expired()
+        select, table, _ = self.feed_source(trash)
+        with self.connect() as db:
+            db.execute('BEGIN')
+            revision = db.execute('SELECT revision FROM sync_state').fetchone()[0]
+            if since > revision:
+                return {'reset': True}
+            rows = db.execute('SELECT note_id, revision FROM note_changes WHERE revision > ? ORDER BY revision LIMIT ?', (since, limit + 1))
+            items, removed, size, processed, more = [], [], 0, since, False
+            for row in rows:
+                record = db.execute(select + ' WHERE n.id = ?', (row['note_id'],)).fetchone()
+                note = dict(record) if record is not None else None
+                if note is not None:
+                    note['matches'] = not query or query in note['text'].casefold()
+                cost = len(json.dumps(note or row['note_id'], ensure_ascii=False).encode()) + 2
+                if len(items) + len(removed) == limit or ((items or removed) and size + cost > PAGE_BYTES):
+                    more = True
+                    break
+                if note is None:
+                    removed.append(row['note_id'])
+                else:
+                    items.append(note)
+                processed = row['revision']; size += cost
+            return dict(items=items, removed=removed, revision=processed if more else revision,
+                        has_more=more, **self.feed_counts(db, table, query))
+
+    def get(self, note_id):
+        with self.connect() as db:
+            row = db.execute(NOTE_SELECT + ' WHERE n.id = ?', (note_id,)).fetchone()
+            return dict(row) if row else None
 
     def add(self, text, request_id=None):
         if not isinstance(text, str) or not text.strip() or len(text) > LIMIT:
@@ -178,6 +305,9 @@ class Handler(BaseHTTPRequestHandler):
         # Never log passwords, request bodies, or note text.
         super().log_message(fmt, *args)
 
+    def log_request(self, code='-', size='-'):
+        self.log_message('"%s %s" %s %s', self.command, self.path.split('?')[0], str(code), str(size))
+
     def reply(self, status, data, cookie=None, content_type='application/json; charset=utf-8'):
         body = json.dumps(data, ensure_ascii=False).encode() if isinstance(data, (dict, list)) else data
         self.send_response(status)
@@ -202,6 +332,31 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith('/api/'):
             if not self.server.app.authenticated(self.headers.get('Cookie')):
                 return self.reply(401, {'error': 'Войдите, чтобы открыть записи.'})
+            if path in ('/api/notes/page', '/api/trash/page', '/api/notes/changes', '/api/trash/changes'):
+                try:
+                    params = parse_qs(urlsplit(self.path).query, keep_blank_values=True, errors='strict', max_num_fields=8)
+                    changes = path.endswith('/changes')
+                    allowed = {'q', 'limit', 'since' if changes else 'before'}
+                    if any(key not in allowed or len(values) != 1 for key, values in params.items()):
+                        raise ValueError('Некорректные параметры запроса.')
+                    value = lambda key, default=None: params.get(key, [default])[0]
+                    kwargs = dict(query=value('q', ''), limit=int(value('limit', str(PAGE_SIZE))), trash=path.startswith('/api/trash/'))
+                    if changes:
+                        result = self.server.app.store.changes(int(value('since', '-1')), **kwargs)
+                    else:
+                        result = self.server.app.store.page(before=value('before'), **kwargs)
+                    return self.reply(200, result)
+                except (ValueError, UnicodeDecodeError):
+                    return self.reply(400, {'error': 'Некорректные параметры страницы или поиска.'})
+                except sqlite3.Error:
+                    return self.reply(503, {'error': 'Не удалось загрузить сообщения. Повторите попытку.'})
+            note_match = re.fullmatch(r'/api/notes/([^/]+)', path)
+            if note_match:
+                try:
+                    note = self.server.app.store.get(note_match[1])
+                    return self.reply(200, note) if note else self.reply(404, {'error': 'Сообщение удалено.'})
+                except sqlite3.Error:
+                    return self.reply(503, {'error': 'Не удалось загрузить сообщение. Повторите попытку.'})
             if path in ('/api/notes', '/api/trash'):
                 try:
                     records = self.server.app.store.trash() if path == '/api/trash' else self.server.app.store.notes()
