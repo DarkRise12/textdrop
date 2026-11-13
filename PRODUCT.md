@@ -20,3 +20,5 @@ Single shared password, Python standard library and SQLite, responsive browser i
 ## Scope Decisions
 
 Message pinning is explicitly excluded by the owner. Deleted messages are recoverable in a 30-day trash. HTTP/HTTPS links are clickable without interpreting user HTML.
+
+History export and import are explicitly excluded by the owner. History stays in Textdrop and is accessed through the service on every device.
