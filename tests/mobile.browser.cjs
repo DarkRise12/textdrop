@@ -1,4 +1,4 @@
-// Mobile density and search behavior with fixture data, never production messages.
+// Shared compact layout and search behavior with fixture data, never production messages.
 const {chromium}=require('playwright');const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict');
 (async()=>{
  const root=path.resolve(__dirname,'../static'),dir=path.join(os.tmpdir(),'textdrop-mobile-layout');fs.mkdirSync(dir,{recursive:true});
@@ -19,10 +19,10 @@ const {chromium}=require('playwright');const fs=require('node:fs'),path=require(
   });
   const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('http://textdrop.test/');await page.locator('.note').last().waitFor();
   function visibleCount(){return page.evaluate(()=>{const history=document.getElementById('history').getBoundingClientRect();return [...document.querySelectorAll('.note')].filter(n=>{const r=n.getBoundingClientRect();return r.top>=history.top&&r.bottom<=history.bottom}).length;});}
-  for(const [w,h,minCount]of [[390,844,5],[320,640,3]]){
+  for(const [w,h,minCount]of [[1280,850,6],[800,600,3],[390,844,5],[320,640,3]]){
    await page.setViewportSize({width:w,height:h});await page.waitForTimeout(120);await page.evaluate(()=>latest());
    assert((await page.locator('#workspace-toolbar').boundingBox()).height<=52);
-   assert((await page.locator('#history').boundingBox()).y<=112);
+   assert((await page.locator('#history').boundingBox()).y<=(w>600?115:112));
    assert(await visibleCount()>=minCount);
    assert(await page.locator('#search').isHidden());assert(await page.locator('#search-toggle').isVisible());
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
@@ -36,8 +36,8 @@ const {chromium}=require('playwright');const fs=require('node:fs'),path=require(
   await page.locator('#search').fill('Сообщение 12.');assert.equal(await page.locator('.note').count(),1);
   await page.locator('#search').press('Escape');assert(await page.locator('#search').isHidden());assert.equal(await page.locator('.note').count(),35);assert.equal(await page.locator('#search').inputValue(),'');
   await page.getByRole('button',{name:'Открыть поиск',exact:true}).click();await page.locator('#search').fill('Сообщение 7.');await page.getByRole('button',{name:'Закрыть поиск',exact:true}).click();assert.equal(await page.locator('.note').count(),35);
-  // Desktop keeps full labels and its always-visible search. Active queries survive rotation.
-  await page.setViewportSize({width:1280,height:850});assert(await page.locator('#search').isVisible());assert(await page.locator('#search-toggle').isHidden());assert(await page.locator('.note').last().locator('[data-action="edit"] .action-label').isVisible());assert(await page.locator('.note').last().locator('.action-icon').first().isHidden());
+  // Desktop shares the compact icons and collapsed search. Active queries survive resizing.
+  await page.setViewportSize({width:1280,height:850});assert(await page.locator('#search').isHidden());assert(await page.locator('#search-toggle').isVisible());assert(await page.locator('.note').last().locator('.action-icon').first().isVisible());await page.locator('#search-toggle').click();
   await page.locator('#search').fill('Сообщение 9.');await page.setViewportSize({width:390,height:844});await page.waitForFunction(()=>document.getElementById('search-toggle').getAttribute('aria-expanded')==='true');assert(await page.locator('#search').isVisible());assert.equal(await page.locator('.note').count(),1);await page.locator('#search').press('Escape');
   // Status dot retains the full error and the recovery message for assistive tools.
   failed=true;await page.waitForFunction(()=>!loading);await page.evaluate(()=>sync());assert.equal(await page.locator('#connection').getAttribute('data-state'),'error');assert.equal(await page.locator('#connection').getAttribute('title'),'Сервер недоступен');assert(await page.locator('#notice').isVisible());
@@ -48,6 +48,6 @@ const {chromium}=require('playwright');const fs=require('node:fs'),path=require(
   await page.locator('#text').fill('');await page.setViewportSize({width:390,height:420});await page.waitForFunction(()=>document.getElementById('compose').getBoundingClientRect().bottom<=innerHeight);
   await page.locator('#search-toggle').click();assert(await page.locator('#search').isVisible());assert((await page.locator('#history').boundingBox()).height>0);
   await page.screenshot({path:path.join(dir,'search-short-viewport.png')});assert.deepEqual(errors,[]);
-  console.log('PASS: compact toolbar, 5/3 fully visible fixture messages, collapsed/expanded search, Escape/close, desktop labels, active filter across resize, accessible icons/copy/edit, status recovery, retained multiline draft, short viewport, both themes.');
+  console.log('PASS: compact desktop/mobile toolbar, more fully visible fixture messages, collapsed/expanded search, Escape/close, shared desktop layout, active filter across resize, accessible icons/copy/edit, status recovery, retained multiline draft, short viewport, both themes.');
  }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exit(1)});

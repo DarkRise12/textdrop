@@ -146,7 +146,6 @@ function setConnection(message, state = 'loading') {
   $('connection').title = message;
   $('connection').dataset.state = state;
 }
-const mobileLayout = matchMedia('(max-width: 600px)');
 function setSearchOpen(open, focus = false) {
   $('workspace-toolbar').classList.toggle('search-open', open);
   $('search-toggle').setAttribute('aria-expanded', String(open));
@@ -156,11 +155,8 @@ function setSearchOpen(open, focus = false) {
 }
 $('search-toggle').onclick = () => setSearchOpen($('search-toggle').getAttribute('aria-expanded') !== 'true', true);
 $('search').onkeydown = event => {
-  if (event.key === 'Escape' && mobileLayout.matches) { event.preventDefault(); setSearchOpen(false, true); }
+  if (event.key === 'Escape') { event.preventDefault(); setSearchOpen(false, true); }
 };
-mobileLayout.addEventListener('change', event => {
-  if (event.matches) setSearchOpen(Boolean($('search').value) || document.activeElement === $('search'));
-});
 setConnection($('connection').textContent);
 function configureView() {
   const inTrash = view === 'trash';

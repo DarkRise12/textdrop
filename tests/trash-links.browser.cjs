@@ -26,7 +26,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),asse
   await item(a).getByRole('button',{name:'Удалить',exact:true}).click();await a.locator('dialog').getByRole('button',{name:'В корзину',exact:true}).click();await a.waitForFunction(id=>!document.querySelector(`.note[data-id="${id}"]`),original.id);
   await sync(b);assert.equal(await item(b).count(),0);await select(a,'Корзина');await select(b,'Корзина');
   assert.equal(await item(a).locator('.note-text').textContent(),text);assert(await a.locator('#compose').isHidden());assert((await item(a).locator('.trash-expiry').textContent()).includes('Удалится'));assert.equal(await item(a).getByRole('button',{name:'Изменить',exact:true}).count(),0);
-  await a.locator('#search').fill('no-match');assert(await a.locator('#no-results').isVisible());await a.locator('#search').fill('');
+  await a.locator('#search-toggle').click();await a.locator('#search').fill('no-match');assert(await a.locator('#no-results').isVisible());await a.locator('#search').fill('');await a.locator('#search').press('Escape');
   // A failed restore keeps the item and allows a retry.
   await a.route('**/api/trash/*/restore',r=>r.fulfill({status:503,json:{error:'Тест: восстановление временно недоступно.'}}));
   await item(a).getByRole('button',{name:'Восстановить',exact:true}).click();await a.locator('#notice').waitFor();assert.equal(await item(a).count(),1);await a.unroute('**/api/trash/*/restore');
