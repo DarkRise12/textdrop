@@ -22,7 +22,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),asse
   const popupPromise=a.waitForEvent('popup');await item(a).locator('a').first().click();const popup=await popupPromise;await popup.waitForLoadState();assert(await popup.evaluate(()=>window.opener===null));assert.equal(referer,undefined);await popup.close();
   await a.locator('#text').fill('Черновик не должен потеряться');
   // Cancel first, then confirm moving to trash.
-  await item(a).getByRole('button',{name:'Удалить',exact:true}).click();assert((await a.locator('dialog p').textContent()).includes('30 дней'));await a.locator('dialog').getByRole('button',{name:'Оставить'}).click();assert.equal(await item(a).count(),1);
+  await item(a).getByRole('button',{name:'Удалить',exact:true}).click();assert((await a.locator('#delete-dialog p').textContent()).includes('30 дней'));await a.locator('dialog').getByRole('button',{name:'Оставить'}).click();assert.equal(await item(a).count(),1);
   await item(a).getByRole('button',{name:'Удалить',exact:true}).click();await a.locator('dialog').getByRole('button',{name:'В корзину',exact:true}).click();await a.waitForFunction(id=>!document.querySelector(`.note[data-id="${id}"]`),original.id);
   await sync(b);assert.equal(await item(b).count(),0);await select(a,'Корзина');await select(b,'Корзина');
   assert.equal(await item(a).locator('.note-text').textContent(),text);assert(await a.locator('#compose').isHidden());assert((await item(a).locator('.trash-expiry').textContent()).includes('Удалится'));assert.equal(await item(a).getByRole('button',{name:'Изменить',exact:true}).count(),0);

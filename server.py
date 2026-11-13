@@ -15,7 +15,9 @@ import tempfile
 import threading
 import unicodedata
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from functools import wraps
+from accounts import Accounts, password_matches
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -82,9 +84,18 @@ class EditConflict(RequestConflict):
         self.current = current
 
 
+def storage_serialized(method):
+    @wraps(method)
+    def run(self, *args, **kwargs):
+        with self.accounts.storage_lock if self.accounts else nullcontext():
+            return method(self, *args, **kwargs)
+    return run
+
+
 class Store:
     def __init__(self, path, file_limit=FILE_LIMIT, storage_limit=STORAGE_LIMIT):
         self.path = path
+        self.accounts = None
         self.preview_lock = threading.Lock()
         self.preview_quota_blocked = {}
         if file_limit <= 0 or storage_limit <= 0:
@@ -282,11 +293,17 @@ class Store:
     def used_file_bytes(db):
         return db.execute('SELECT COALESCE((SELECT sum(size) FROM attachments),0) + COALESCE((SELECT sum(length(body)) FROM attachment_images),0)').fetchone()[0]
 
+    @storage_serialized
+    def quota_bytes(self, db):
+        return self.used_file_bytes(db) + (self.accounts.other_bytes(self.path) if self.accounts else 0)
+
+    @storage_serialized
     def storage(self):
         with self.connect() as db:
-            used = self.used_file_bytes(db)
+            used = self.quota_bytes(db)
         return dict(used_bytes=used, max_file_bytes=self.file_limit, max_storage_bytes=self.storage_limit)
 
+    @storage_serialized
     def add_file(self, stream, size, name, text, request_id, digest):
         if type(size) is not int or not 0 <= size <= self.file_limit:
             raise UploadLimit('Файл превышает допустимый размер.')
@@ -308,7 +325,7 @@ class Store:
                 if row is None:
                     raise RequestGone('Файл уже отправлен и удалён. Повтор не восстановит его.')
                 return note_record(row)
-            used = self.used_file_bytes(db)
+            used = self.quota_bytes(db)
             if used + size > self.storage_limit:
                 raise UploadLimit('Хранилище файлов заполнено. Освободи место, удалив файлы из корзины.')
             header = stream.read(16); stream.seek(0)
@@ -369,7 +386,7 @@ class Store:
                 row = self.preview_row(db, note_id)
                 if row['version'] == PREVIEW_VERSION:
                     return row['body']
-                used = self.used_file_bytes(db)
+                used = self.quota_bytes(db)
                 blocked = self.preview_quota_blocked.get(note_id)
                 if blocked and blocked[:2] == (used, self.storage_limit) and blocked[2] > time.monotonic():
                     return None
@@ -391,23 +408,27 @@ class Store:
                             body = candidate
                 except subprocess.TimeoutExpired:
                     pass
-            with self.connect() as db:
-                db.execute('BEGIN IMMEDIATE')
-                self.preview_row(db, note_id)  # Deletion while processing must not create an orphan.
-                used = self.used_file_bytes(db)
-                if body is not None and used + len(body) > self.storage_limit:
-                    now = time.monotonic()
-                    self.preview_quota_blocked = {key: value for key, value in self.preview_quota_blocked.items() if value[2] > now}
-                    if len(self.preview_quota_blocked) >= 256:
-                        self.preview_quota_blocked.pop(next(iter(self.preview_quota_blocked)))
-                    self.preview_quota_blocked[note_id] = (used, self.storage_limit, now + 60)
-                    return None
-                self.preview_quota_blocked.pop(note_id, None)
-                db.execute('UPDATE attachment_images SET version=?, width=?, height=?, body=? WHERE note_id=?',
-                    (PREVIEW_VERSION, width, height, body, note_id))
-            return body
+            with self.accounts.storage_lock if self.accounts else nullcontext():
+                return self.save_preview(note_id, body, width, height)
         finally:
             self.preview_lock.release()
+
+    def save_preview(self, note_id, body, width, height):
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            self.preview_row(db, note_id)  # Deletion while processing must not create an orphan.
+            used = self.quota_bytes(db)
+            if body is not None and used + len(body) > self.storage_limit:
+                now = time.monotonic()
+                self.preview_quota_blocked = {key: value for key, value in self.preview_quota_blocked.items() if value[2] > now}
+                if len(self.preview_quota_blocked) >= 256:
+                    self.preview_quota_blocked.pop(next(iter(self.preview_quota_blocked)))
+                self.preview_quota_blocked[note_id] = (used, self.storage_limit, now + 60)
+                return None
+            self.preview_quota_blocked.pop(note_id, None)
+            db.execute('UPDATE attachment_images SET version=?, width=?, height=?, body=? WHERE note_id=?',
+                (PREVIEW_VERSION, width, height, body, note_id))
+        return body
 
     def edit(self, note_id, text, version):
         if not isinstance(text, str) or len(text) > LIMIT:
@@ -485,6 +506,10 @@ class Store:
 class App:
     def __init__(self, store, password, secret, secure=False):
         self.store, self.password, self.secret, self.secure = store, password, secret.encode(), secure
+        self.accounts = Accounts(store.path, password, self.secret)
+        store.accounts = self.accounts
+        self.stores = {'owner': store}
+        self.store_lock = threading.Lock()
         self.failures = {}
         self.uploads = threading.BoundedSemaphore(2)
         self.lock = threading.Lock()
@@ -492,20 +517,62 @@ class App:
     def signature(self, expires):
         return hmac.new(self.secret, str(expires).encode(), hashlib.sha256).hexdigest()
 
-    def token(self):
-        expires = int(time.time()) + 30 * 86400
-        return f'{expires}.{self.signature(expires)}'
+    def token(self, user_id='owner'):
+        return self.accounts.issue(user_id)
+
+    @staticmethod
+    def cookie_token(header):
+        try:
+            return cookies.SimpleCookie(header or '')['session'].value
+        except (KeyError, cookies.CookieError):
+            return ''
+
+    def user(self, header):
+        return self.accounts.resolve(self.cookie_token(header))
 
     def authenticated(self, header):
+        return self.user(header) is not None
+
+    def store_for(self, user_id):
+        with self.accounts.storage_lock, self.store_lock:
+            if user_id not in self.stores:
+                path = self.accounts.data_path(user_id)
+                path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                store = Store(path, self.store.file_limit, self.store.storage_limit)
+                store.accounts = self.accounts
+                # All accounts share one bounded image worker.
+                store.preview_lock = self.store.preview_lock
+                self.stores[user_id] = store
+            return self.stores[user_id]
+
+
+def database_errors(method):
+    @wraps(method)
+    def run(self, *args, **kwargs):
         try:
-            jar = cookies.SimpleCookie(header or '')
-            expires, signature = jar['session'].value.split('.')
-            return int(expires) > time.time() and hmac.compare_digest(signature, self.signature(expires))
-        except (KeyError, ValueError, cookies.CookieError):
-            return False
+            return method(self, *args, **kwargs)
+        except sqlite3.Error:
+            self.close_connection = True
+            return self.reply(503, {'error': 'Хранилище временно недоступно. Повтори попытку.'})
+    return run
 
 
 class Handler(BaseHTTPRequestHandler):
+    @property
+    def store(self):
+        return self.server.app.store_for(self.account['id'])
+
+    def authorize(self, require_binding=True):
+        self.account = self.server.app.user(self.headers.get('Cookie'))
+        if self.account is None:
+            self.reply(401, {'error': 'Войдите, чтобы открыть записи.'})
+            return False
+        binding = self.headers.get('X-Textdrop-User')
+        if binding != self.account['id'] and (binding is not None or require_binding and self.account['id'] != 'owner'):
+            self.reply(409, {'error': 'Учётная запись изменилась. Войди снова.', 'account_changed': True})
+            return False
+        return True
+
     timeout = 10
     json_read_timeout = 10
 
@@ -553,16 +620,22 @@ class Handler(BaseHTTPRequestHandler):
     def session_cookie(self, value, age):
         return f'session={value}; HttpOnly; SameSite=Strict; Path=/; Max-Age={age}' + ('; Secure' if self.server.app.secure else '')
 
+    @database_errors
     def do_GET(self):
         path = self.path.split('?')[0]
         if path == '/api/session':
-            return self.reply(200, {'authenticated': self.server.app.authenticated(self.headers.get('Cookie'))})
+            user = self.server.app.user(self.headers.get('Cookie'))
+            return self.reply(200, {'authenticated': bool(user), **({'user': user} if user else {})})
         if path.startswith('/api/'):
-            if not self.server.app.authenticated(self.headers.get('Cookie')):
-                return self.reply(401, {'error': 'Войдите, чтобы открыть записи.'})
+            if not self.authorize(require_binding=not path.startswith('/api/files/')):
+                return
+            if path == '/api/users':
+                if self.account['role'] != 'admin':
+                    return self.reply(403, {'error': 'Доступно только владельцу.'})
+                return self.reply(200, {'users': self.server.app.accounts.users()})
             if path == '/api/storage':
                 try:
-                    return self.reply(200, self.server.app.store.storage())
+                    return self.reply(200, self.store.storage())
                 except sqlite3.Error:
                     return self.reply(503, {'error': 'Не удалось проверить хранилище.'})
             preview_match = re.fullmatch(r'/api/files/([a-f0-9]{32})/preview', path)
@@ -581,9 +654,9 @@ class Handler(BaseHTTPRequestHandler):
                     value = lambda key, default=None: params.get(key, [default])[0]
                     kwargs = dict(query=value('q', ''), limit=int(value('limit', str(PAGE_SIZE))), trash=path.startswith('/api/trash/'))
                     if changes:
-                        result = self.server.app.store.changes(int(value('since', '-1')), **kwargs)
+                        result = self.store.changes(int(value('since', '-1')), **kwargs)
                     else:
-                        result = self.server.app.store.page(before=value('before'), **kwargs)
+                        result = self.store.page(before=value('before'), **kwargs)
                     return self.reply(200, result)
                 except (ValueError, UnicodeDecodeError):
                     return self.reply(400, {'error': 'Некорректные параметры страницы или поиска.'})
@@ -592,13 +665,13 @@ class Handler(BaseHTTPRequestHandler):
             note_match = re.fullmatch(r'/api/notes/([^/]+)', path)
             if note_match:
                 try:
-                    note = self.server.app.store.get(note_match[1])
+                    note = self.store.get(note_match[1])
                     return self.reply(200, note) if note else self.reply(404, {'error': 'Сообщение удалено.'})
                 except sqlite3.Error:
                     return self.reply(503, {'error': 'Не удалось загрузить сообщение. Повторите попытку.'})
             if path in ('/api/notes', '/api/trash'):
                 try:
-                    records = self.server.app.store.trash() if path == '/api/trash' else self.server.app.store.notes()
+                    records = self.store.trash() if path == '/api/trash' else self.store.notes()
                     return self.reply(200, records)
                 except sqlite3.Error:
                     return self.reply(503, {'error': 'Не удалось загрузить сообщения. Повторите попытку.'})
@@ -611,7 +684,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def image_preview(self, note_id):
         try:
-            body = self.server.app.store.preview(note_id)
+            body = self.store.preview(note_id)
             if body is None:
                 return self.reply(415, {'error': 'Для этого файла предпросмотр недоступен.'})
             etag = '"' + hashlib.sha256(body).hexdigest() + '"'
@@ -640,7 +713,7 @@ class Handler(BaseHTTPRequestHandler):
     def download_file(self, note_id):
         started = False
         try:
-            with self.server.app.store.download(note_id) as (record, blob):
+            with self.store.download(note_id) as (record, blob):
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/octet-stream')
                 self.send_header('Content-Length', str(record['size']))
@@ -660,8 +733,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def upload_file(self):
         app = self.server.app
-        if not app.authenticated(self.headers.get('Cookie')):
-            return self.reply(401, {'error': 'Войдите, чтобы отправить файл.'})
+        if not self.authorize():
+            return
         if not app.uploads.acquire(blocking=False):
             return self.reply(429, {'error': 'Другие файлы ещё загружаются. Повтори отправку чуть позже.'})
         try:
@@ -670,7 +743,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get('Transfer-Encoding') or not 1 <= prefix <= LIMIT * 6 + 1024 or size < prefix:
                 raise ValueError('Некорректный формат загрузки.')
             file_size = size - prefix
-            if file_size > app.store.file_limit:
+            if file_size > self.store.file_limit:
                 raise UploadLimit('Файл превышает допустимый размер.')
             if hasattr(self.connection, 'settimeout'):
                 self.connection.settimeout(120)
@@ -678,7 +751,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(meta, dict):
                 raise ValueError('Некорректные данные файла.')
             # Receive outside the write transaction, using the writable data volume.
-            with tempfile.TemporaryFile(dir=Path(app.store.path).parent) as stream:
+            with tempfile.TemporaryFile(dir=Path(self.store.path).parent) as stream:
                 remaining = file_size; digest = hashlib.sha256()
                 while remaining:
                     chunk = self.rfile.read(min(65536, remaining))
@@ -686,7 +759,9 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError('Загрузка прервана. Повтори отправку.')
                     stream.write(chunk); digest.update(chunk); remaining -= len(chunk)
                 stream.seek(0)
-                note = app.store.add_file(stream, file_size, meta.get('name'), meta.get('text', ''), meta.get('request_id'), digest.hexdigest())
+                if not self.authorize():
+                    return
+                note = self.store.add_file(stream, file_size, meta.get('name'), meta.get('text', ''), meta.get('request_id'), digest.hexdigest())
             self.reply(201, note)
         except UploadLimit as error:
             self.reply(413, {'error': str(error)})
@@ -710,14 +785,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_PATCH(self):
         self.mutate()
 
+    @database_errors
     def mutate(self):
         app = self.server.app
         # Reject cross-origin browser writes, including login/logout.
         origin = self.headers.get('Origin')
         if self.headers.get('Sec-Fetch-Site') == 'cross-site' or (origin and origin not in ('http://' + self.headers.get('Host', ''), 'https://' + self.headers.get('Host', ''))):
             return self.reply(403, {'error': 'Запрос с другого сайта отклонён.'})
-        if not (self.path == '/api/login' and self.command == 'POST') and not app.authenticated(self.headers.get('Cookie')):
-            return self.reply(401, {'error': 'Войдите, чтобы открыть записи.'})
+        if not (self.path == '/api/login' and self.command == 'POST') and not self.authorize():
+            return
         if self.path == '/api/files' and self.command == 'POST':
             return self.upload_file()
         try:
@@ -734,37 +810,71 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(400, {'error': 'Некорректный запрос.'})
         if self.path == '/api/login' and self.command == 'POST':
             ip, now = self.client_address[0], time.monotonic()
+            username = data.get('username', 'admin')
+            key = (ip, username.strip().lower()[:32] if isinstance(username, str) else '')
             with app.lock:
                 app.failures = {k: v for k, v in app.failures.items() if v[1] > now - 300}
-                attempts, _ = app.failures.get(ip, (0, now))
-                if attempts >= 10:
+                attempts, _ = app.failures.get(key, (0, now))
+                if attempts >= 10 or sum(v[0] for v in app.failures.values()) >= 120:
                     return self.reply(429, {'error': 'Слишком много попыток. Подождите 5 минут.'})
-                password = data.get('password')
-                if not isinstance(password, str) or not hmac.compare_digest(password.encode(), app.password.encode()):
-                    app.failures[ip] = (attempts + 1, now)
-                    return self.reply(401, {'error': 'Неверный пароль.'})
-                app.failures.pop(ip, None)
-            return self.reply(200, {'ok': True}, self.session_cookie(app.token(), 30 * 86400))
+                app.failures[key] = (attempts + 1, now)
+            if not app.accounts.login_slots.acquire(blocking=False):
+                return self.reply(429, {'error': 'Вход занят. Повтори через несколько секунд.'})
+            try:
+                with app.accounts.auth_lock:
+                    user = app.accounts.check_login(username, data.get('password'))
+                    if user is None:
+                        return self.reply(401, {'error': 'Неверный логин или пароль.'})
+                    token = app.token(user['id'])
+            finally:
+                app.accounts.login_slots.release()
+            with app.lock:
+                app.failures.pop(key, None)
+            return self.reply(200, {'ok': True, 'user': user}, self.session_cookie(token, 30 * 86400))
         if not app.authenticated(self.headers.get('Cookie')):
             return self.reply(401, {'error': 'Войдите, чтобы открыть записи.'})
         try:
             if self.path == '/api/logout' and self.command == 'POST':
+                app.accounts.revoke(app.cookie_token(self.headers.get('Cookie')))
                 return self.reply(200, {'ok': True}, self.session_cookie('', 0))
+            if self.path == '/api/password' and self.command == 'POST':
+                with app.accounts.auth_lock:
+                    current = app.accounts.get(self.account['id'])
+                    if not password_matches(data.get('current_password'), current['password_hash']):
+                        return self.reply(403, {'error': 'Текущий пароль неверен.'})
+                    app.accounts.change_password(self.account['id'], data.get('password'))
+                return self.reply(200, {'ok': True}, self.session_cookie('', 0))
+            if self.path == '/api/users' or self.path.startswith('/api/users/'):
+                if self.account['role'] != 'admin':
+                    return self.reply(403, {'error': 'Доступно только владельцу.'})
+                if self.path == '/api/users' and self.command == 'POST':
+                    user = app.accounts.create(data.get('username'), data.get('password'))
+                    return self.reply(201, {'ok': True, 'user': user})
+                match = re.fullmatch(r'/api/users/([a-f0-9]{32})(/password)?', self.path)
+                if not match or not app.accounts.get(match[1]):
+                    return self.reply(404, {'error': 'Учётная запись не найдена.'})
+                if match[2] and self.command == 'POST':
+                    app.accounts.change_password(match[1], data.get('password'))
+                    return self.reply(200, {'ok': True})
+                if not match[2] and self.command == 'PATCH':
+                    app.accounts.set_active(match[1], data.get('active'))
+                    return self.reply(200, {'ok': True})
+                return self.reply(404, {'error': 'Не найдено.'})
             if self.path == '/api/notes' and self.command == 'POST':
-                return self.reply(201, app.store.add(data.get('text'), data.get('request_id')))
+                return self.reply(201, self.store.add(data.get('text'), data.get('request_id')))
             restore_match = re.fullmatch(r'/api/trash/([^/]+)/restore', self.path)
             if restore_match and self.command == 'POST':
-                return self.reply(200, app.store.restore(restore_match[1]))
+                return self.reply(200, self.store.restore(restore_match[1]))
             purge_match = re.fullmatch(r'/api/trash/([^/]+)', self.path)
             if purge_match and self.command == 'DELETE':
-                if app.store.purge(purge_match[1]):
+                if self.store.purge(purge_match[1]):
                     return self.reply(200, {'ok': True})
                 return self.reply(404, {'error': 'Сообщение уже восстановлено или удалено окончательно.'})
             if self.path.startswith('/api/notes/') and self.command == 'PATCH':
-                note = app.store.edit(self.path.removeprefix('/api/notes/'), data.get('text'), data.get('version'))
+                note = self.store.edit(self.path.removeprefix('/api/notes/'), data.get('text'), data.get('version'))
                 return self.reply(200, note)
             if self.path.startswith('/api/notes/') and self.command == 'DELETE':
-                deleted = app.store.delete(self.path.removeprefix('/api/notes/'))
+                deleted = self.store.delete(self.path.removeprefix('/api/notes/'))
                 return self.reply(200 if deleted else 404, {'ok': bool(deleted)})
             self.reply(404, {'error': 'Не найдено.'})
         except RequestConflict as exc:
@@ -814,7 +924,9 @@ class TextdropServer(ThreadingHTTPServer):
             return
         self._next_cleanup = now + 3600
         try:
-            self.app.store.purge_expired()
+            for user in self.app.accounts.users():
+                if self.app.accounts.data_path(user['id']).exists():
+                    self.app.store_for(user['id']).purge_expired()
         except sqlite3.Error:
             self._next_cleanup = now + 60
             print('Trash cleanup failed; retrying later.', file=sys.stderr, flush=True)

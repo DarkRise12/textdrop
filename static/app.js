@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 let notes = [], loading = false, generation = 0, online = false;
 let editor = null;
-let sessionEpoch = 0;
+let sessionEpoch = 0, currentUser = null;
 let view = 'chat', syncAgain = false, viewLoaded = false;
 let noticeKind = '';
 let currentQuery = '', searchTimer = null, feedAbort = null;
@@ -36,7 +36,7 @@ function saveDraft() {
 function restoreDraft() {
   draftReady = true;
   try {
-    draftStore = new window.TextdropDraft(localStorage);
+    draftStore = new window.TextdropDraft(localStorage, () => Date.now(), currentUser.id);
     const draft = draftStore.load();
     if (draft) {
       $('text').value = draft.text;
@@ -91,7 +91,29 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener('resize', fitViewport);
   fitViewport();
 }
-function session(active) {
+function session(active, user = currentUser) {
+  if (active) {
+    if (!isUser(user)) throw Error('Не удалось определить учётную запись. Обнови страницу.');
+    if (currentUser?.id !== user.id) {
+      saveDraft();
+      if (editor) editor.closed = true;
+      editor = null; selectedFile = null; pendingFileSend = null; pendingSend = null;
+      $('text').value = ''; draftStatus(''); draftReady = false;
+      currentQuery = ''; $('search').value = ''; view = 'chat';
+      $('workspace').dataset.view = view;
+      $('view-chat').setAttribute('aria-pressed', 'true');
+      $('view-trash').setAttribute('aria-pressed', 'false');
+      $('compose-controls').hidden = false; $('trash-hint').hidden = true;
+      clearFeedState(); notes = []; viewLoaded = false; $('notes').replaceChildren();
+      expandedMessages.clear(); messagePreviewCache.clear(); updateAttachment();
+    }
+    currentUser = user;
+    $('account-label').textContent = user.username;
+    $('account-button').setAttribute('aria-label', 'Учётная запись ' + user.username);
+    $('username').value = user.username;
+  }
+  $('account-button').hidden = !active;
+  if (!active && $('account-dialog').open) $('account-dialog').close();
   sessionEpoch++;
   uploadRequest?.abort();
   $('send').classList.remove('sending');
@@ -115,6 +137,9 @@ function session(active) {
 function apiError(message, status, kind) {
   return Object.assign(new Error(message), {status, kind});
 }
+function isUser(value) {
+  return value && /^(owner|[a-f0-9]{32})$/.test(value.id) && typeof value.username === 'string' && ['admin', 'user'].includes(value.role);
+}
 function isNote(value) {
   return value && (!value.file || typeof value.file.name === 'string' && Number.isSafeInteger(value.file.size) && value.file.size >= 0 && /^[a-f0-9]{64}$/.test(value.file.sha256)) && typeof value.id === 'string' && typeof value.text === 'string' && Number.isFinite(value.created) && !Number.isNaN(new Date(value.created).getTime());
 }
@@ -123,7 +148,7 @@ async function api(path, method = 'GET', body, signal) {
   let response;
   try {
     response = await fetch('/api/' + path, {
-      method, headers: body ? {'Content-Type': 'application/json'} : {},
+      method, headers: {...(body ? {'Content-Type': 'application/json'} : {}), ...(currentUser && !['session', 'login'].includes(path) ? {'X-Textdrop-User': currentUser.id} : {})},
       body: body ? JSON.stringify(body) : undefined,
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000)
     });
@@ -137,7 +162,7 @@ async function api(path, method = 'GET', body, signal) {
   try { data = await response.json(); } catch { data = null; }
   if (!response.ok) {
     const kind = response.status === 401 ? 'auth' : response.status >= 500 ? 'server' : 'request';
-    if (response.status === 401 && path !== 'login' && requestedAt === generation) {
+    if ((response.status === 401 || data?.account_changed) && path !== 'login' && requestedAt === generation) {
       session(false);
       notice('Сессия завершилась. Войди снова — черновик сохранён.', 'auth');
     }
@@ -161,7 +186,9 @@ async function api(path, method = 'GET', body, signal) {
         && data.items.every(note => typeof note.matches === 'boolean'))
     : /^notes\/[^/]+$/.test(route) && method === 'GET' ? isNote(data)
     : route === 'storage' ? Number.isSafeInteger(data?.used_bytes) && Number.isSafeInteger(data?.max_file_bytes) && Number.isSafeInteger(data?.max_storage_bytes)
-    : path === 'session' ? typeof data?.authenticated === 'boolean'
+    : route === 'users' && method === 'GET' ? Array.isArray(data?.users) && data.users.every(user => typeof user.id === 'string' && typeof user.username === 'string')
+    : path === 'login' ? data?.ok === true && isUser(data.user)
+    : path === 'session' ? typeof data?.authenticated === 'boolean' && (!data.authenticated || isUser(data.user))
     : path === 'notes' && method === 'GET' ? Array.isArray(data) && data.every(isNote)
     : path === 'trash' && method === 'GET' ? Array.isArray(data) && data.every(note => isNote(note) && Number.isFinite(note.deleted) && !Number.isNaN(new Date(note.deleted).getTime()) && Number.isFinite(note.expires) && !Number.isNaN(new Date(note.expires).getTime()))
     : path.startsWith('trash/') && method === 'POST' ? isNote(data)
@@ -631,7 +658,7 @@ async function loadOlder() {
 $('load-more').onclick = loadOlder;
 $('login-form').onsubmit = async event => {
   event.preventDefault(); const button = event.submitter; button.disabled = true; notice('');
-  try { await api('login', 'POST', {password: $('password').value}); $('password').value = ''; session(true); await sync(); }
+  try { const data = await api('login', 'POST', {username: $('username').value, password: $('password').value}); $('password').value = ''; session(true, data.user); await sync(); }
   catch (error) { notice(errorMessage(error)); }
   finally { button.disabled = false; }
 };
@@ -735,6 +762,7 @@ function uploadFile(file, text) {
     const xhr = new XMLHttpRequest(); uploadRequest = xhr;
     xhr.open('POST', '/api/files'); xhr.timeout = 600000;
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.setRequestHeader('X-Textdrop-User', currentUser.id);
     xhr.setRequestHeader('X-Textdrop-Metadata-Length', String(metadata.length));
     $('upload-feedback').hidden = false;
     $('upload-progress').value = 0; $('upload-status').textContent = 'Загружаем файл…';
@@ -752,7 +780,7 @@ function uploadFile(file, text) {
     xhr.onload = () => {
       finish(); let data;
       try { data = JSON.parse(xhr.responseText); } catch { data = null; }
-      if (xhr.status === 401 && current === generation) { session(false); notice('Сессия завершилась. Войди снова — файл остаётся выбранным.', 'auth'); }
+      if ((xhr.status === 401 || data?.account_changed) && current === generation) { session(false); notice('Сессия завершилась. Войди снова — файл остаётся выбранным.', 'auth'); }
       if (xhr.status >= 200 && xhr.status < 300 && isNote(data) && data.file) resolve(data);
       else reject(apiError(data?.error || 'Не удалось отправить файл. Повтори отправку.', xhr.status, xhr.status === 401 ? 'auth' : 'server'));
     };
@@ -772,7 +800,7 @@ $('logout').onclick = async () => {
     pendingSend = null; selectedFile = null; pendingFileSend = null; updateAttachment(); $('text').value = '';
     let cleared = true;
     try { draftStore?.clear(); } catch { cleared = false; }
-    draftStatus(''); session(false);
+    draftStatus(''); session(false); draftReady = false; currentUser = null; draftStore = null;
     notice(cleared ? '' : 'Вы вышли, но очистить черновик не удалось. Удалите данные сайта в настройках браузера.');
     $('password').focus();
   }
@@ -793,7 +821,7 @@ async function start() {
     const data = await api('session');
     if (current !== generation) return;
     if (noticeKind === 'start') notice('');
-    session(data.authenticated); $('retry').hidden = true;
+    session(data.authenticated, data.user); $('retry').hidden = true;
     if (data.authenticated) await sync();
   } catch (error) {
     if (current !== generation) return;
@@ -805,3 +833,84 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) sync
 window.addEventListener('online', () => { if ($('workspace').hidden) start(); else sync(); });
 setInterval(() => { if (!document.hidden) sync(); }, 3000);
 start();
+
+function accountFeedback(message, success = false) {
+  $('account-feedback').textContent = message;
+  $('account-feedback').classList.toggle('success', success);
+}
+async function loadUsers() {
+  const epoch = sessionEpoch;
+  $('users-retry').hidden = true;
+  try {
+    const data = await api('users');
+    if (epoch !== sessionEpoch || !$('account-dialog').open) return;
+    $('users-list').replaceChildren();
+    for (const user of data.users) {
+      const row = document.createElement('div'); row.className = 'user-row';
+      const name = document.createElement('strong'); name.textContent = user.username;
+      const state = document.createElement('span'); state.className = 'user-state';
+      state.textContent = user.role === 'admin' ? 'Владелец' : user.active ? 'Активен' : 'Отключён';
+      row.append(name, state);
+      if (user.role !== 'admin') {
+        const actions = document.createElement('div'); actions.className = 'user-actions';
+        const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'quiet';
+        toggle.textContent = user.active ? 'Отключить' : 'Включить';
+        toggle.setAttribute('aria-label', toggle.textContent + ' ' + user.username);
+        toggle.onclick = async () => {
+          const actionEpoch = sessionEpoch; toggle.disabled = true;
+          try { await api('users/' + user.id, 'PATCH', {active: !user.active}); if (actionEpoch !== sessionEpoch) return; await loadUsers(); accountFeedback(user.active ? 'Доступ отключён. Сессии завершены.' : 'Доступ включён.', true); }
+          catch (error) { if (actionEpoch === sessionEpoch) accountFeedback(errorMessage(error)); toggle.disabled = false; }
+        };
+        const reset = document.createElement('button'); reset.type = 'button'; reset.className = 'quiet'; reset.textContent = 'Новый пароль';
+        const form = document.createElement('form'); form.className = 'user-reset'; form.hidden = true;
+        const label = document.createElement('label'); label.textContent = 'Новый пароль для ' + user.username;
+        const input = document.createElement('input'); input.type = 'password'; input.required = true; input.minLength = 12; input.maxLength = 1024; input.autocomplete = 'new-password';
+        const submit = document.createElement('button'); submit.textContent = 'Сохранить пароль';
+        label.append(input); form.append(label, submit);
+        reset.onclick = () => { form.hidden = !form.hidden; if (!form.hidden) input.focus(); };
+        form.onsubmit = async event => {
+          event.preventDefault(); const actionEpoch = sessionEpoch; submit.disabled = true; accountFeedback('');
+          try { await api('users/' + user.id + '/password', 'POST', {password: input.value}); if (actionEpoch !== sessionEpoch) return; form.reset(); form.hidden = true; accountFeedback('Пароль изменён. Сессии пользователя завершены.', true); }
+          catch (error) { if (actionEpoch === sessionEpoch) accountFeedback(errorMessage(error)); }
+          finally { submit.disabled = false; }
+        };
+        actions.append(toggle, reset); row.append(actions, form);
+      }
+      $('users-list').append(row);
+    }
+  } catch (error) { if (epoch === sessionEpoch) { accountFeedback(errorMessage(error)); $('users-retry').hidden = false; } }
+}
+$('account-button').onclick = () => {
+  accountFeedback(''); $('users-list').replaceChildren();
+  $('account-identity').textContent = currentUser.username;
+  $('account-nav').hidden = currentUser.role !== 'admin';
+  accountPane(currentUser.role === 'admin' ? 'users' : 'password');
+  $('account-dialog').showModal();
+  if (currentUser.role === 'admin') loadUsers();
+};
+$('close-account').onclick = () => $('account-dialog').close();
+$('account-dialog').onclose = () => {
+  $('password-form').reset(); $('create-user-form').reset(); $('users-list').replaceChildren();
+};
+$('users-retry').onclick = loadUsers;
+$('create-user-form').onsubmit = async event => {
+  event.preventDefault(); const actionEpoch = sessionEpoch, form = event.currentTarget, button = event.submitter; button.disabled = true; accountFeedback('');
+  try { const data = await api('users', 'POST', Object.fromEntries(new FormData(form))); if (actionEpoch !== sessionEpoch) return; form.reset(); await loadUsers(); accountFeedback('Создан пользователь ' + data.user.username + '. Передай ему логин и пароль.', true); }
+  catch (error) { if (actionEpoch === sessionEpoch) accountFeedback(errorMessage(error)); }
+  finally { button.disabled = false; }
+};
+$('password-form').onsubmit = async event => {
+  event.preventDefault(); const actionEpoch = sessionEpoch, button = event.submitter; button.disabled = true; accountFeedback('');
+  try { await api('password', 'POST', Object.fromEntries(new FormData(event.currentTarget))); if (actionEpoch !== sessionEpoch) return; saveDraft(); session(false); notice('Пароль изменён. Войди с новым паролем.', 'success'); }
+  catch (error) { if (actionEpoch === sessionEpoch) accountFeedback(errorMessage(error)); }
+  finally { button.disabled = false; }
+};
+
+function accountPane(pane) {
+  $('users-section').hidden = pane !== 'users';
+  $('password-section').hidden = pane !== 'password';
+  $('account-users-tab').setAttribute('aria-pressed', String(pane === 'users'));
+  $('account-password-tab').setAttribute('aria-pressed', String(pane === 'password'));
+}
+$('account-users-tab').onclick = () => accountPane('users');
+$('account-password-tab').onclick = () => accountPane('password');

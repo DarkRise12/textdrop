@@ -18,7 +18,7 @@ fs.mkdirSync(captures,{recursive:true});
   const req=route.request(),path=new URL(req.url()).pathname;
   const reply=feed(req);if(reply)return route.fulfill(reply);
   let result;
-  if(path==='/api/session') result={authenticated:true};
+  if(path==='/api/session') result={authenticated:true,user:{id:'owner',username:'admin',role:'admin'}};
   else if(path==='/api/notes'&&req.method()==='GET') result=data;
   else if(path==='/api/notes'&&req.method()==='POST'){
    if(failSend)return route.fulfill({status:503,json:{error:'Тест: сервер временно недоступен.'}});

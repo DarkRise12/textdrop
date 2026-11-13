@@ -11,7 +11,7 @@ const {chromium}=require('playwright');const fs=require('node:fs'),path=require(
   await context.route('http://textdrop.test/**',route=>{
    const pathname=new URL(route.request().url()).pathname;
    const reply=feed(route.request());if(reply)return route.fulfill(failed&&pathname.startsWith('/api/notes/')?{status:503,json:{error:'Тестовый сбой'}}:reply);
-   if(pathname==='/api/session')return route.fulfill({json:{authenticated:true}});
+   if(pathname==='/api/session')return route.fulfill({json:{authenticated:true,user:{id:'owner',username:'admin',role:'admin'}}});
    if(pathname==='/api/notes')return route.fulfill(failed?{status:503,json:{error:'Тестовый сбой'}}:{json:notes});
    if(pathname==='/api/trash')return route.fulfill({json:trash});
    const name=pathname==='/'?'index.html':pathname.slice(1);

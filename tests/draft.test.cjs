@@ -40,3 +40,12 @@ test('file retry metadata survives reload without persisting file bytes and clea
  const restored=new env.window.TextdropDraft(storage,()=>1001).load();assert.equal(restored.filePending.id,pending.id);assert.equal(restored.filePending.name,'same.bin');
  first.clear();assert.equal(first.load(),null);
 });
+
+test('accounts keep independent drafts and logout clears only the selected account',()=>{
+ const store=storage(), now=()=>1000;
+ const owner=new Draft(store,now,'owner'), alex=new Draft(store,now,'alex-id');
+ owner.save('owner draft',null);alex.save('alex draft',null);
+ assert.equal(new Draft(store,now).load().text,'owner draft');
+ assert.equal(alex.load().text,'alex draft');
+ alex.clear();assert.equal(alex.load(),null);assert.equal(owner.load().text,'owner draft');
+});

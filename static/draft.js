@@ -1,10 +1,10 @@
 'use strict';
 // Drafts stay on this browser; no message text is sent by this helper.
 class TextdropDraft {
-  constructor(storage, now = () => Date.now()) {
+  constructor(storage, now = () => Date.now(), userId = 'owner') {
     this.storage = storage;
     this.now = now;
-    this.key = 'textdrop-draft-v1';
+    this.key = 'textdrop-draft-v1' + (userId === 'owner' ? '' : ':' + userId);
     this.lifetime = 7 * 24 * 60 * 60 * 1000;
   }
   load() {

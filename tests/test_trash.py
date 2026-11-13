@@ -103,10 +103,16 @@ class TrashTests(unittest.TestCase):
 
     def test_periodic_cleanup_retries_without_exposing_sqlite_errors(self):
         server = TextdropServer.__new__(TextdropServer)
-        server.app = SimpleNamespace(store=Mock())
+        store = Mock()
+        accounts = Mock()
+        accounts.users.return_value = [{'id': 'owner'}, {'id': 'other'}]
+        accounts.data_path.return_value.exists.return_value = True
+        other = Mock()
+        server.app = SimpleNamespace(store=store, accounts=accounts, store_for=lambda user_id: store if user_id == 'owner' else other)
         with patch('server.time.monotonic', return_value=100):
             server.service_actions(); server.service_actions()
         self.assertEqual(server.app.store.purge_expired.call_count, 1)
+        self.assertEqual(other.purge_expired.call_count, 1)
         server.app.store.purge_expired.side_effect = sqlite3.OperationalError('private-path')
         with patch('server.time.monotonic', return_value=3700), patch('server.sys.stderr', new_callable=io.StringIO) as stderr:
             server.service_actions()

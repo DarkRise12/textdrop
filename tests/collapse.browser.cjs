@@ -32,7 +32,7 @@ const fs = require('node:fs'), path = require('node:path'), os = require('node:o
     await context.route('http://textdrop.test/**', route => {
       const req = route.request(), pathname = new URL(req.url()).pathname;
       const reply = feed(req); if (reply) return route.fulfill(reply);
-      if (pathname === '/api/session') return route.fulfill({json: {authenticated: true}});
+      if (pathname === '/api/session') return route.fulfill({json: {authenticated: true, user: {id: 'owner', username: 'admin', role: 'admin'}}});
       if (pathname === '/api/notes') return route.fulfill({json: notes});
       if (pathname === '/api/trash') return route.fulfill({json: trash});
       if (pathname.startsWith('/api/notes/') && req.method() === 'PATCH') {
