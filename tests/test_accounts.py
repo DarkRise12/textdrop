@@ -197,3 +197,20 @@ class AccountTests(unittest.TestCase):
                 self.assertEqual(status, 503)
                 self.assertNotIn('private-path', result['error'])
         self.assertEqual(self.request('GET', '/api/notes', auth=self.owner)[1], [self.old])
+
+    def test_seven_character_passwords_and_six_character_rejection(self):
+        status, body = self.request('POST', '/api/users', {'username': 'short', 'password': 'abcdefg'}, self.owner)
+        self.assertEqual(status, 201)
+        user_id = body['user']['id']
+        self.assertEqual(self.request('POST', '/api/login', {'username': 'short', 'password': 'abcdefg'})[0], 200)
+        self.assertEqual(self.request('POST', '/api/users', {'username': 'six', 'password': 'abcdef'}, self.owner)[0], 400)
+        path = '/api/users/' + user_id + '/password'
+        self.assertEqual(self.request('POST', path, {'password': 'abcdef'}, self.owner)[0], 400)
+        self.assertIsNotNone(self.app.accounts.check_login('short', 'abcdefg'))
+        self.assertEqual(self.request('POST', path, {'password': 'gfedcba'}, self.owner)[0], 200)
+        auth = self.auth(user_id)
+        payload = {'current_password': 'gfedcba', 'password': 'abcdef'}
+        self.assertEqual(self.request('POST', '/api/password', payload, auth)[0], 400)
+        payload['password'] = 'newpass'
+        self.assertEqual(self.request('POST', '/api/password', payload, auth)[0], 200)
+        self.assertIsNotNone(self.app.accounts.check_login('short', 'newpass'))

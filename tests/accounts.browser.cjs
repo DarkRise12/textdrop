@@ -8,7 +8,7 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
   const server = spawn('python3', ['server.py'], {
     cwd: path.resolve(__dirname, '..'),
     env: {...process.env, TEXTDROP_HOST: '127.0.0.1', TEXTDROP_PORT: '0', TEXTDROP_DATA: dir,
-      TEXTDROP_PASSWORD: 'owner-test-password', TEXTDROP_SECRET: 'accounts-test-secret-'.repeat(3)},
+      TEXTDROP_PASSWORD: 'ownpass', TEXTDROP_SECRET: 'accounts-test-secret-'.repeat(3)},
     stdio: ['ignore', 'pipe', 'pipe']
   });
   let errors = ''; server.stderr.on('data', data => errors += data);
@@ -36,17 +36,17 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
       await page.locator('#text').fill(text); await page.locator('#send').click();
       await page.waitForFunction(() => !document.getElementById('send').classList.contains('sending')); await idle(page);
     };
-    await page.goto(base); await login(page, 'admin', 'owner-test-password');
+    await page.goto(base); await login(page, 'admin', 'ownpass');
     await send(page, 'Owner private history');
     await page.locator('#account-button').click();
     await page.locator('#create-user-form [name=username]').fill('alex');
-    await page.locator('#create-user-form [name=password]').fill('alex-test-password');
+    await page.locator('#create-user-form [name=password]').fill('alexpwd');
     await page.locator('#create-user-form button').click();
     await page.getByText('Создан пользователь alex.', {exact: false}).waitFor();
     assert.equal(await page.locator('.user-row').count(), 2);
     await page.screenshot({path: '/tmp/textdrop-accounts-desktop.png'});
     await page.locator('#close-account').click();
-    await phone.goto(base); await login(phone, 'alex', 'alex-test-password');
+    await phone.goto(base); await login(phone, 'alex', 'alexpwd');
     assert.equal(await phone.locator('.note').count(), 0);
     await send(phone, 'Alex private history');
     assert.equal(await page.locator('.note').count(), 1);
@@ -69,42 +69,42 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
 
     // A cookie can change in a different tab without a session transition here.
     await page.locator('#text').fill('Owner browser draft');
-    await owner.request.post(base + '/api/login', {data: {username: 'alex', password: 'alex-test-password'}});
+    await owner.request.post(base + '/api/login', {data: {username: 'alex', password: 'alexpwd'}});
     await page.evaluate(() => sync()); await page.locator('#login').waitFor();
-    await login(page, 'alex', 'alex-test-password');
+    await login(page, 'alex', 'alexpwd');
     assert.equal(await page.locator('#text').inputValue(), '');
     assert.equal(await page.locator('.note').count(), 2);
     await page.locator('#text').fill('Alex second browser draft');
-    await owner.request.post(base + '/api/login', {data: {username: 'admin', password: 'owner-test-password'}});
+    await owner.request.post(base + '/api/login', {data: {username: 'admin', password: 'ownpass'}});
     await page.evaluate(() => sync()); await page.locator('#login').waitFor();
-    await login(page, 'admin', 'owner-test-password');
+    await login(page, 'admin', 'ownpass');
     assert.equal(await page.locator('#text').inputValue(), 'Owner browser draft');
     assert.equal(await page.locator('.note').count(), 1);
 
     await page.locator('#account-button').click();
     const row = page.locator('.user-row').filter({has: page.locator('strong', {hasText: /^alex$/})});
     await row.getByRole('button', {name: 'Новый пароль', exact: true}).click();
-    await row.locator('input').fill('changed-alex-password');
+    await row.locator('input').fill('resetpw');
     await row.getByRole('button', {name: 'Сохранить пароль', exact: true}).click();
     await page.getByText('Пароль изменён. Сессии пользователя завершены.', {exact: true}).waitFor();
     await phone.evaluate(() => sync()); await phone.locator('#login').waitFor();
-    await login(phone, 'alex', 'changed-alex-password');
+    await login(phone, 'alex', 'resetpw');
     assert.equal(await phone.locator('#text').inputValue(), 'Alex browser draft');
     await row.getByRole('button', {name: 'Отключить alex', exact: true}).click();
     await page.getByText('Доступ отключён. Сессии завершены.', {exact: true}).waitFor();
     await phone.evaluate(() => sync()); await phone.locator('#login').waitFor();
     await row.getByRole('button', {name: 'Включить alex', exact: true}).click();
     await page.getByText('Доступ включён.', {exact: true}).waitFor();
-    await login(phone, 'alex', 'changed-alex-password');
+    await login(phone, 'alex', 'resetpw');
     await phone.locator('#account-button').click();
-    await phone.locator('#password-form [name=current_password]').fill('changed-alex-password');
-    await phone.locator('#password-form [name=password]').fill('my-new-alex-password');
+    await phone.locator('#password-form [name=current_password]').fill('resetpw');
+    await phone.locator('#password-form [name=password]').fill('newpass');
     await phone.locator('#password-form button').click();
     await phone.locator('#login').waitFor();
-    await login(phone, 'alex', 'my-new-alex-password');
+    await login(phone, 'alex', 'newpass');
     assert.equal(await phone.locator('#text').inputValue(), 'Alex browser draft');
     await phone.locator('#logout').click(); await phone.locator('#login').waitFor();
-    await login(phone, 'alex', 'my-new-alex-password');
+    await login(phone, 'alex', 'newpass');
     assert.equal(await phone.locator('#text').inputValue(), '');
     console.log('PASS: owner administration, isolated chats/files/drafts, mobile layout, cross-tab cookie binding, reset/disable and own password change.');
   } finally {

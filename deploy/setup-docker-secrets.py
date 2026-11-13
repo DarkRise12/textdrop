@@ -8,7 +8,7 @@ import sys
 
 def check(root):
     problems = []
-    for name, minimum in [('password', 12), ('session', 32)]:
+    for name, minimum in [('password', 7), ('session', 32)]:
         path = root / name
         if not path.is_file():
             problems.append(f'Отсутствует файл {path}')
@@ -20,15 +20,15 @@ def check(root):
 def prepare(root):
     # Validate existing files before creating anything. Never rotate credentials
     # implicitly when repairing an interrupted setup.
-    for name, minimum in [('password', 12), ('session', 32)]:
+    for name, minimum in [('password', 7), ('session', 32)]:
         path = root / name
         if path.exists() and (not path.is_file() or len(path.read_text()) < minimum):
             raise ValueError(f'Проверьте {path}: ожидается файл минимум из {minimum} символов.')
     values = {}
     if not (root / 'password').exists():
-        password = getpass.getpass('Пароль для входа (минимум 12 символов): ')
-        if len(password) < 12 or any(c in password for c in '\r\n\x00'):
-            raise ValueError('Нужен пароль от 12 символов без переводов строк.')
+        password = getpass.getpass('Пароль для входа (минимум 7 символов): ')
+        if len(password) < 7 or any(c in password for c in '\r\n\x00'):
+            raise ValueError('Нужен пароль от 7 символов без переводов строк.')
         if password != getpass.getpass('Повторите пароль: '):
             raise ValueError('Пароли не совпадают.')
         values['password'] = password

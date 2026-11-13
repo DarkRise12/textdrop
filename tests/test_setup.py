@@ -37,3 +37,17 @@ class SetupTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     setup.prepare(root)
             self.assertFalse(root.exists())
+
+    def test_seven_character_password_minimum(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / '.secrets'
+            with patch.object(setup.getpass, 'getpass', return_value='abcdef'):
+                with self.assertRaises(ValueError):
+                    setup.prepare(root)
+            self.assertFalse(root.exists())
+            with patch.object(setup.getpass, 'getpass', side_effect=['abcdefg'] * 2):
+                setup.prepare(root)
+            self.assertEqual(setup.check(root), [])
+            self.assertEqual((root / 'password').read_text(), 'abcdefg')
+            with patch.object(setup.getpass, 'getpass', side_effect=AssertionError('Unexpected prompt')):
+                setup.prepare(root)

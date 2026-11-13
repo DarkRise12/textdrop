@@ -864,7 +864,7 @@ async function loadUsers() {
         const reset = document.createElement('button'); reset.type = 'button'; reset.className = 'quiet'; reset.textContent = 'Новый пароль';
         const form = document.createElement('form'); form.className = 'user-reset'; form.hidden = true;
         const label = document.createElement('label'); label.textContent = 'Новый пароль для ' + user.username;
-        const input = document.createElement('input'); input.type = 'password'; input.required = true; input.minLength = 12; input.maxLength = 1024; input.autocomplete = 'new-password';
+        const input = document.createElement('input'); input.type = 'password'; input.required = true; input.minLength = 7; input.maxLength = 1024; input.autocomplete = 'new-password';
         const submit = document.createElement('button'); submit.textContent = 'Сохранить пароль';
         label.append(input); form.append(label, submit);
         reset.onclick = () => { form.hidden = !form.hidden; if (!form.hidden) input.focus(); };

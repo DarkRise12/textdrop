@@ -934,8 +934,8 @@ class TextdropServer(ThreadingHTTPServer):
 
 def main():
     password, secret = configuration_secret('TEXTDROP_PASSWORD'), configuration_secret('TEXTDROP_SECRET')
-    if not password or len(password) < 12 or not secret or len(secret) < 32:
-        raise SystemExit('Set TEXTDROP_PASSWORD (12+ characters) and TEXTDROP_SECRET (32+ characters).')
+    if not password or len(password) < 7 or not secret or len(secret) < 32:
+        raise SystemExit('Set TEXTDROP_PASSWORD (7+ characters) and TEXTDROP_SECRET (32+ characters).')
     data = Path(os.environ.get('TEXTDROP_DATA', ROOT / 'data'))
     data.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.umask(0o077)

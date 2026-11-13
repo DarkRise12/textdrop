@@ -11,8 +11,8 @@ import time
 
 
 def password_hash(password):
-    if not isinstance(password, str) or not 12 <= len(password) <= 1024:
-        raise ValueError('Пароль должен содержать от 12 до 1024 символов.')
+    if not isinstance(password, str) or not 7 <= len(password) <= 1024:
+        raise ValueError('Пароль должен содержать от 7 до 1024 символов.')
     salt = secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 600000)
     return '600000$' + salt.hex() + '$' + digest.hex()

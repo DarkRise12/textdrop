@@ -5,9 +5,9 @@ from pathlib import Path
 import secrets
 
 path = Path(__file__).resolve().parents[1] / '.env'
-password = getpass.getpass('Пароль для входа (минимум 12 символов): ')
-if len(password) < 12 or any(c in password for c in '\r\n\x00'):
-    raise SystemExit('Нужен пароль от 12 символов без переводов строк.')
+password = getpass.getpass('Пароль для входа (минимум 7 символов): ')
+if len(password) < 7 or any(c in password for c in '\r\n\x00'):
+    raise SystemExit('Нужен пароль от 7 символов без переводов строк.')
 if password != getpass.getpass('Повторите пароль: '):
     raise SystemExit('Пароли не совпадают.')
 # systemd EnvironmentFile quoted-value escaping.
