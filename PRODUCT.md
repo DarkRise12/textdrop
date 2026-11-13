@@ -23,4 +23,4 @@ Message pinning is explicitly excluded by the owner. Deleted messages are recove
 
 History export and import are explicitly excluded by the owner. History stays in Textdrop and is accessed through the service on every device.
 
-File messages support private downloads, editable captions, 30-day trash and restore. Current defaults are 25 MiB per file and 1 GiB total file payload, configurable on the server. Image previews remain a later step.
+File messages support private downloads, editable captions, 30-day trash and restore. Current defaults are 125 MiB per file and 3 GiB total file payload, configurable on the server. Image previews remain a later step.
