@@ -31,3 +31,12 @@ test('storage failures propagate so the UI can warn without discarding in-memory
  const draft=new Draft({getItem(){throw Error('blocked')},setItem(){throw Error('quota')},removeItem(){throw Error('blocked')}});
  assert.throws(()=>draft.load());assert.throws(()=>draft.save('text',null));assert.throws(()=>draft.clear());
 });
+
+test('file retry metadata survives reload without persisting file bytes and clears on logout',()=>{
+ const store=new Map();const storage={getItem:key=>store.get(key)??null,setItem:(key,value)=>store.set(key,value),removeItem:key=>store.delete(key)};
+ const source=fs.readFileSync(path.join(__dirname,'../static/draft.js'),'utf8');const env={window:{}};vm.runInNewContext(source,env);
+ const pending={name:'same.bin',size:12,lastModified:1000,text:'caption',id:'file-request-123456'};
+ const first=new env.window.TextdropDraft(storage,()=>1000);first.save('caption',null,pending);
+ const restored=new env.window.TextdropDraft(storage,()=>1001).load();assert.equal(restored.filePending.id,pending.id);assert.equal(restored.filePending.name,'same.bin');
+ first.clear();assert.equal(first.load(),null);
+});

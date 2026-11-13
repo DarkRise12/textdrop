@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 let notes = [], loading = false, generation = 0, online = false;
 let editor = null;
+let sessionEpoch = 0;
 let view = 'chat', syncAgain = false, viewLoaded = false;
 let noticeKind = '';
 let currentQuery = '', searchTimer = null, feedAbort = null;
@@ -26,8 +27,8 @@ function draftStatus(text, error = false) {
 function saveDraft() {
   if (!draftReady) return;
   try {
-    draftStore.save($('text').value, pendingSend);
-    draftStatus($('text').value ? 'Черновик сохранён на этом устройстве' : '');
+    draftStore.save($('text').value, pendingSend, pendingFileSend);
+    draftStatus(pendingFileSend && !selectedFile ? 'Для повтора выбери файл: ' + pendingFileSend.name : $('text').value ? 'Черновик сохранён на этом устройстве' : '');
   } catch {
     draftStatus('Не удалось сохранить черновик на устройстве. Не закрывай вкладку.', true);
   }
@@ -40,7 +41,8 @@ function restoreDraft() {
     if (draft) {
       $('text').value = draft.text;
       pendingSend = draft.pending || null;
-      draftStatus(draft.text ? 'Черновик восстановлен' : '');
+      pendingFileSend = draft.filePending || null;
+      draftStatus(pendingFileSend ? 'Для повтора выбери файл: ' + pendingFileSend.name : draft.text ? 'Черновик восстановлен' : '');
     }
   } catch { draftStatus('Хранилище браузера недоступно. Черновик сохранится только в этой вкладке.', true); }
 }
@@ -90,6 +92,11 @@ if (window.visualViewport) {
   fitViewport();
 }
 function session(active) {
+  sessionEpoch++;
+  uploadRequest?.abort();
+  $('send').classList.remove('sending');
+  $('send').setAttribute('aria-label', 'Отправить сообщение');
+  resizeInput();
   generation++;
   $('login').hidden = active;
   $('workspace').hidden = !active;
@@ -633,12 +640,14 @@ $('compose').onsubmit = async event => {
   if (button.disabled || (!$('text').value.trim() && !selectedFile)) return;
   button.disabled = true; button.classList.add('sending'); button.setAttribute('aria-label', 'Отправляем сообщение'); notice('');
   const text = $('text').value;
+  const epoch = sessionEpoch;
   const file = selectedFile;
-  if (!pendingSend || pendingSend.text !== text) pendingSend = {text, id: requestId()};
+  if (!file && (!pendingSend || pendingSend.text !== text)) pendingSend = {text, id: requestId()};
   const sending = pendingSend;
   saveDraft(); // Persist the retry identifier before the request can reach the server.
   try {
     const saved = file ? await uploadFile(file, text) : await api('notes', 'POST', {text, request_id: sending.id});
+    if (epoch !== sessionEpoch) return;
     if (file && selectedFile === file) { selectedFile = null; pendingFileSend = null; updateAttachment(); }
     if (pendingSend === sending) pendingSend = null;
     generation++; // Ignore a poll that began before this message was saved.
@@ -653,12 +662,13 @@ $('compose').onsubmit = async event => {
     }
     await sync();
   } catch (error) {
+    if (epoch !== sessionEpoch) return;
     if ([409, 410].includes(error.status) && pendingSend === sending) pendingSend = null;
     if (file && [409, 410].includes(error.status)) pendingFileSend = null;
     saveDraft();
     notice(errorMessage(error));
   }
-  finally { button.classList.remove('sending'); button.setAttribute('aria-label', 'Отправить сообщение'); resizeInput(); }
+  finally { if (epoch === sessionEpoch) { button.classList.remove('sending'); button.setAttribute('aria-label', 'Отправить сообщение'); resizeInput(); } }
 };
 let imageOpener = null;
 function showImage(note, opener) {
@@ -696,7 +706,7 @@ function updateAttachment() {
   resizeInput();
 }
 $('attach').onclick = () => $('file-input').click();
-$('remove-attachment').onclick = () => { selectedFile = null; pendingFileSend = null; updateAttachment(); };
+$('remove-attachment').onclick = () => { selectedFile = null; pendingFileSend = null; updateAttachment(); saveDraft(); };
 $('file-input').onchange = async () => {
   const file = $('file-input').files[0];
   if (!file || uploadRequest) return;
@@ -705,14 +715,20 @@ $('file-input').onchange = async () => {
     const storage = await api('storage');
     if (current !== generation || $('workspace').hidden) return;
     if (file.size > storage.max_file_bytes) throw Error('Файл слишком большой. Лимит: ' + formatFileSize(storage.max_file_bytes) + '.');
-    selectedFile = file; pendingFileSend = null; updateAttachment();
+    selectedFile = file;
+    if (pendingFileSend && !samePendingFile(file, pendingFileSend)) pendingFileSend = null;
+    updateAttachment(); saveDraft();
     notice(file.size + storage.used_bytes > storage.max_storage_bytes
       ? 'Хранилище заполнено. Освободи место в корзине перед отправкой.' : '');
   } catch (error) { notice(errorMessage(error)); $('file-input').value = ''; }
 };
 $('cancel-upload').onclick = () => uploadRequest?.abort();
+function samePendingFile(file, pending) {
+  return file.name === pending.name && file.size === pending.size;
+}
 function uploadFile(file, text) {
-  if (!pendingFileSend || pendingFileSend.file !== file || pendingFileSend.text !== text) pendingFileSend = {file, text, id: requestId()};
+  if (!pendingFileSend || !samePendingFile(file, pendingFileSend) || pendingFileSend.text !== text) pendingFileSend = {name: file.name, size: file.size, lastModified: file.lastModified, text, id: requestId()};
+  saveDraft();
   const metadata = new TextEncoder().encode(JSON.stringify({name: file.name, text, request_id: pendingFileSend.id}));
   const current = generation;
   return new Promise((resolve, reject) => {

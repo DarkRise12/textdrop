@@ -86,6 +86,7 @@ class Store:
     def __init__(self, path, file_limit=FILE_LIMIT, storage_limit=STORAGE_LIMIT):
         self.path = path
         self.preview_lock = threading.Lock()
+        self.preview_quota_blocked = {}
         if file_limit <= 0 or storage_limit <= 0:
             raise ValueError('File storage limits must be positive.')
         self.file_limit, self.storage_limit = file_limit, storage_limit
@@ -368,6 +369,12 @@ class Store:
                 row = self.preview_row(db, note_id)
                 if row['version'] == PREVIEW_VERSION:
                     return row['body']
+                used = self.used_file_bytes(db)
+                blocked = self.preview_quota_blocked.get(note_id)
+                if blocked and blocked[:2] == (used, self.storage_limit) and blocked[2] > time.monotonic():
+                    return None
+                if used >= self.storage_limit:
+                    return None
             body, width, height = None, None, None
             with tempfile.TemporaryDirectory(prefix='.preview-', dir=Path(self.path).parent) as directory:
                 source = Path(directory) / 'source'
@@ -387,8 +394,15 @@ class Store:
             with self.connect() as db:
                 db.execute('BEGIN IMMEDIATE')
                 self.preview_row(db, note_id)  # Deletion while processing must not create an orphan.
-                if body is not None and self.used_file_bytes(db) + len(body) > self.storage_limit:
+                used = self.used_file_bytes(db)
+                if body is not None and used + len(body) > self.storage_limit:
+                    now = time.monotonic()
+                    self.preview_quota_blocked = {key: value for key, value in self.preview_quota_blocked.items() if value[2] > now}
+                    if len(self.preview_quota_blocked) >= 256:
+                        self.preview_quota_blocked.pop(next(iter(self.preview_quota_blocked)))
+                    self.preview_quota_blocked[note_id] = (used, self.storage_limit, now + 60)
                     return None
+                self.preview_quota_blocked.pop(note_id, None)
                 db.execute('UPDATE attachment_images SET version=?, width=?, height=?, body=? WHERE note_id=?',
                     (PREVIEW_VERSION, width, height, body, note_id))
             return body
@@ -492,6 +506,29 @@ class App:
 
 
 class Handler(BaseHTTPRequestHandler):
+    timeout = 10
+    json_read_timeout = 10
+
+    def read_json_body(self, size):
+        deadline = time.monotonic() + self.json_read_timeout
+        chunks = []
+        remaining = size
+        try:
+            while remaining:
+                wait = deadline - time.monotonic()
+                if wait <= 0:
+                    raise TimeoutError()
+                if hasattr(self.connection, "settimeout"):
+                    self.connection.settimeout(wait)
+                chunk = self.rfile.read1(min(65536, remaining))
+                if not chunk:
+                    raise ValueError()
+                chunks.append(chunk); remaining -= len(chunk)
+            return json.loads(b"".join(chunks)) if size else {}
+        finally:
+            if hasattr(self.connection, "settimeout"):
+                self.connection.settimeout(self.timeout)
+
     def log_message(self, fmt, *args):
         # Never log passwords, request bodies, or note text.
         super().log_message(fmt, *args)
@@ -679,15 +716,20 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get('Origin')
         if self.headers.get('Sec-Fetch-Site') == 'cross-site' or (origin and origin not in ('http://' + self.headers.get('Host', ''), 'https://' + self.headers.get('Host', ''))):
             return self.reply(403, {'error': 'Запрос с другого сайта отклонён.'})
+        if not (self.path == '/api/login' and self.command == 'POST') and not app.authenticated(self.headers.get('Cookie')):
+            return self.reply(401, {'error': 'Войдите, чтобы открыть записи.'})
         if self.path == '/api/files' and self.command == 'POST':
             return self.upload_file()
         try:
             size = int(self.headers.get('Content-Length', '0'))
             if size < 0 or size > LIMIT * 6 + 100:
                 return self.reply(413, {'error': 'Слишком большой текст.'})
-            data = json.loads(self.rfile.read(size)) if size else {}
+            data = self.read_json_body(size)
             if not isinstance(data, dict):
                 raise ValueError()
+        except TimeoutError:
+            self.close_connection = True
+            return self.reply(408, {'error': 'Время получения запроса истекло.'})
         except (ValueError, UnicodeDecodeError):
             return self.reply(400, {'error': 'Некорректный запрос.'})
         if self.path == '/api/login' and self.command == 'POST':
@@ -744,6 +786,26 @@ def configuration_secret(name):
 
 
 class TextdropServer(ThreadingHTTPServer):
+    def __init__(self, *args, **kwargs):
+        self.request_slots = threading.BoundedSemaphore(64)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self.request_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self.request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.request_slots.release()
+
     def service_actions(self):
         # Expired items are immediately unavailable via the API; also remove them
         # physically when the trash is never opened. No external scheduler needed.

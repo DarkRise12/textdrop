@@ -15,6 +15,9 @@ class MemorySocket:
         self.input = io.BytesIO(raw)
         self.output = io.BytesIO()
 
+    def settimeout(self, timeout):
+        self.timeout = timeout
+
     def makefile(self, *args):
         return self.input
 
