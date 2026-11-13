@@ -32,8 +32,6 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .top-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .header-button { min-height: 44px; padding: 10px 14px; border: 1px solid var(--bubble-line); background: var(--bubble); color: var(--accent-ink); font-size: 14px; }
 .header-button:hover { background: var(--hover); border-color: var(--accent-ink); }
-#logout { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
-#logout:hover { background: var(--accent-hover); }
 .message-count { margin-bottom: 5px; font-size: 14px; font-weight: 600; }
 .theme-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .sun, [data-theme="dark"] .moon { display: none; }
@@ -172,12 +170,12 @@ input[type="search"] { min-height: 40px; }
 .history-content { padding: 12px 28px 18px; }
 #notes { gap: 8px; }
 .note { padding: 10px 16px 7px; }
-.note-meta { margin-top: 4px; }
+.note-meta { margin-top: 0; }
 .day-divider { padding: 8px 0 4px; }
 .composer-area { padding: 12px 28px max(10px, env(safe-area-inset-bottom)); }
 .compose-footer { display: none; }
 .note-actions { flex-wrap: nowrap; }
-.note-actions button { display: grid; place-items: center; width: 40px; min-width: 40px; height: 40px; padding: 9px; }
+.note-actions button { display: grid; place-items: center; width: 44px; min-width: 44px; height: 44px; padding: 11px; }
 .note-actions .action-icon { display: block; width: 19px; height: 19px; }
 .note-actions .action-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 @media (max-width: 600px) {
@@ -224,43 +222,82 @@ input[type="search"] { min-height: 40px; }
 
 /* Account settings reuse the chat palette and native dialog behavior. */
 #account-button, #logout { display: inline-flex; align-items: center; gap: 8px; }
-#account-button { max-width: 180px; }
+#account-button { max-width: 180px; min-width: 0; }
 #account-button svg, #logout svg { width: 18px; height: 18px; }
-#account-label { overflow: hidden; text-overflow: ellipsis; }
-#account-dialog { width: min(560px, calc(100% - 32px)); max-width: 560px; max-height: 88dvh; overflow: auto; scrollbar-color: var(--line) transparent; }
-.account-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#account-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#account-dialog { width: min(560px, calc(100% - 32px)); max-width: 560px; max-height: 88dvh; padding: 0; overflow: hidden; }
+#account-dialog[open] { display: flex; flex-direction: column; }
+.account-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px 28px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .account-heading h2 { margin: 0; }
-#account-identity { margin: 8px 0 24px; overflow-wrap: anywhere; color: var(--accent-ink); }
-#account-dialog h3 { margin: 28px 0 8px; font-size: 18px; }
+#close-account { min-height: 44px; }
+#close-account svg { display: none; }
+.account-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 20px 28px; scrollbar-color: var(--line) transparent; }
+#account-identity { margin: 0 0 12px; overflow-wrap: anywhere; color: var(--accent-ink); }
+.account-footer { padding: 12px 28px; border-top: 1px solid var(--line); flex-shrink: 0; }
+#logout { min-height: 44px; color: var(--muted); }
+#account-dialog h3 { margin: 24px 0 8px; font-size: 18px; }
 #account-dialog section > p { margin: 0 0 18px; font-size: 14px; }
 .account-form { display: grid; gap: 14px; }
-.account-form label, .user-reset label { display: grid; gap: 6px; font-size: 14px; }
+.account-form label, .user-reset label, .password-control { display: grid; gap: 6px; font-size: 14px; }
 .account-form button { justify-self: start; }
-#users-list { margin-top: 24px; }
+.users-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 20px 0 8px; }
+#account-dialog .users-heading h3 { margin: 0; }
+#add-user { min-height: 44px; padding: 10px 12px; font-size: 13px; }
+#create-user-form { margin-top: 16px; padding: 16px 0; border-block: 1px solid var(--line); }
+.create-user-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+#users-list { margin-top: 16px; }
 .user-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 16px 0; border-top: 1px solid var(--line); }
 .user-row strong { overflow-wrap: anywhere; }
 .user-state { color: var(--muted); font-size: 13px; }
 .user-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+.user-actions button { min-height: 44px; }
 .user-reset { grid-column: 1 / -1; display: grid; gap: 12px; }
 .user-reset button { justify-self: start; }
 #account-feedback { margin: 0 0 16px; font-size: 14px; color: var(--error); }
 #account-feedback:empty { display: none; }
 #account-feedback.success { color: var(--accent-ink); }
 .account-nav { display: flex; gap: 6px; padding-block: 8px; border-bottom: 1px solid var(--line); }
-.account-nav button { min-height: 40px; padding: 8px 14px; background: transparent; color: var(--muted); }
+.account-nav button { min-height: 44px; padding: 8px 14px; background: transparent; color: var(--muted); }
 .account-nav button[aria-pressed="true"] { background: var(--bubble); color: var(--accent-ink); }
+.storage-summary { margin-bottom: 16px; }
+.storage-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; font-size: 14px; }
+.storage-heading span { font-size: 12px; color: var(--muted); }
+#storage-usage { display: block; width: 100%; height: 6px; margin: 10px 0; accent-color: var(--accent-ink); }
+#account-dialog #storage-status { font-size: 12px; margin: 8px 0 0; }
+#storage-retry { min-height: 44px; font-size: 13px; padding-left: 0; }
 #login-form { display: grid; gap: 10px; }
-#login-form button { margin-top: 8px; }
+#login-form > button { margin-top: 8px; }
+.password-field { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); min-width: 0; }
+.password-field:focus-within { border-color: var(--focus); }
+.password-field input { width: 0; min-width: 0; flex: 1; border: 0; background: transparent; }
+.password-field input:focus-visible { outline-offset: -3px; }
+.password-field .password-toggle, .login .password-toggle { width: auto; min-height: 44px; margin: 0; padding: 10px; font-size: 12px; color: var(--accent-ink); flex-shrink: 0; }
+.has-query .message-count { display: none; }
+#search-results-label { white-space: nowrap; font-size: 12px; color: var(--muted); }
+.search-label input { flex: 1; }
+mark { color: var(--ink); background: var(--selection); border-radius: 2px; }
+.attachment-selection { flex-wrap: wrap; }
+#attachment-name { order: 0; }
+#remove-attachment { order: 1; }
+#attachment-space { order: 2; flex-basis: 100%; color: var(--muted); font-size: 12px; }
+#workspace[data-view="trash"] .note-actions button[data-action="restore"] { display: flex; gap: 6px; width: auto; padding: 8px 10px; }
+#workspace[data-view="trash"] [data-action="restore"] .action-label { position: static; width: auto; height: auto; clip-path: none; }
 @media (max-width: 1000px) { .tagline { display: none; } }
 @media (min-width: 601px) and (max-width: 900px) {
-  #theme-label, #logout span { display: none; }
-  #theme-toggle, #logout { width: 44px; min-width: 44px; justify-content: center; padding: 10px; }
+  #theme-label { display: none; }
+  #theme-toggle { width: 44px; min-width: 44px; justify-content: center; padding: 10px; }
 }
 @media (max-width: 600px) {
   .top { gap: 8px; padding-inline: 12px; }
-  .top-actions { gap: 6px; }
+  .top-actions { gap: 6px; min-width: 0; }
   .brand { font-size: 21px; gap: 3px; }
-  #logout, #account-button { width: 44px; min-width: 44px; justify-content: center; padding: 10px; }
-  #logout span, #account-label { display: none; }
-  #account-dialog { padding: 20px; }
+  #account-button { width: auto; min-height: 44px; max-width: min(152px, calc(100vw - 218px)); padding: 10px; gap: 6px; }
+  #account-label { display: inline; }
+  .account-heading { padding: 12px 20px; }
+  #close-account { display: grid; place-items: center; width: 44px; min-width: 44px; padding: 10px; }
+  #close-account svg { display: block; }
+  #close-account span { display: none; }
+  .account-scroll { padding: 20px; }
+  .account-footer { padding: 10px 20px; }
+  #search-results-label { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
 }

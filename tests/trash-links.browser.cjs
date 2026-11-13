@@ -9,7 +9,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),asse
   const base='http://127.0.0.1:'+port;browser=await chromium.launch({headless:true});
   const ca=await browser.newContext({viewport:{width:1280,height:850}}),cb=await browser.newContext({viewport:{width:390,height:844},colorScheme:'dark'});
   const a=await ca.newPage(),b=await cb.newPage();const errors=[];
-  for(const p of [a,b]){p.on('pageerror',e=>errors.push(e.message));await p.goto(base);await p.locator('#password').fill('trash-test-password-123');await p.locator('#login-form button').click();await p.locator('#workspace').waitFor();await p.waitForFunction(()=>!loading);}
+  for(const p of [a,b]){p.on('pageerror',e=>errors.push(e.message));await p.goto(base);await p.locator('#username').fill('admin');await p.locator('#password').fill('trash-test-password-123');await p.locator('#login-form button[type=submit]').click();await p.locator('#workspace').waitFor();await p.waitForFunction(()=>!loading);}
   async function sync(p){await p.waitForFunction(()=>!loading);await p.evaluate(()=>sync());await p.waitForFunction(()=>!loading);}
   async function select(p,name){await p.getByRole('button',{name,exact:true}).click();await p.waitForFunction(()=>!loading);}
   const text='Текст <img src=x onerror=alert(1)>\n(https://example.test/a(b)).\nhttps://example.test/?a=1&b=2\njavascript:alert(1) https://user:pass@example.test/';

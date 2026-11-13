@@ -30,7 +30,7 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
     const idle = page => page.waitForFunction(() => viewLoaded && !loading && !searchTimer);
     const login = async (page, username, password) => {
       await page.locator('#username').fill(username); await page.locator('#password').fill(password);
-      await page.locator('#login-form button').click(); await idle(page);
+      await page.locator('#login-form button[type=submit]').click(); await idle(page);
     };
     const send = async (page, text) => {
       await page.locator('#text').fill(text); await page.locator('#send').click();
@@ -39,9 +39,10 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
     await page.goto(base); await login(page, 'admin', 'ownpass');
     await send(page, 'Owner private history');
     await page.locator('#account-button').click();
+    await page.locator('#add-user').click();
     await page.locator('#create-user-form [name=username]').fill('alex');
     await page.locator('#create-user-form [name=password]').fill('alexpwd');
-    await page.locator('#create-user-form button').click();
+    await page.locator('#create-user-form button[type=submit]').click();
     await page.getByText('Создан пользователь alex.', {exact: false}).waitFor();
     assert.equal(await page.locator('.user-row').count(), 2);
     await page.screenshot({path: '/tmp/textdrop-accounts-desktop.png'});
@@ -99,11 +100,11 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
     await phone.locator('#account-button').click();
     await phone.locator('#password-form [name=current_password]').fill('resetpw');
     await phone.locator('#password-form [name=password]').fill('newpass');
-    await phone.locator('#password-form button').click();
+    await phone.locator('#password-form button[type=submit]').click();
     await phone.locator('#login').waitFor();
     await login(phone, 'alex', 'newpass');
     assert.equal(await phone.locator('#text').inputValue(), 'Alex browser draft');
-    await phone.locator('#logout').click(); await phone.locator('#login').waitFor();
+    await phone.locator('#account-button').click();await phone.locator('#logout').click(); await phone.locator('#login').waitFor();
     await login(phone, 'alex', 'newpass');
     assert.equal(await phone.locator('#text').inputValue(), '');
     console.log('PASS: owner administration, isolated chats/files/drafts, mobile layout, cross-tab cookie binding, reset/disable and own password change.');

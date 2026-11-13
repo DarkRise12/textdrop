@@ -24,7 +24,7 @@ const {chromium}=require('playwright');const fs=require('node:fs'),path=require(
    await page.setViewportSize({width:w,height:h});await page.waitForTimeout(120);await page.evaluate(()=>latest());
    assert((await page.locator('#workspace-toolbar').boundingBox()).height<=52);
    assert((await page.locator('#history').boundingBox()).y<=(w>600?115:112));
-   assert(await visibleCount()>=minCount);
+   assert(await visibleCount()>=minCount, 'Viewport '+w+'×'+h+': '+await visibleCount()+' visible, expected '+minCount);
    assert(await page.locator('#search').isHidden());assert(await page.locator('#search-toggle').isVisible());
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
    for(const button of await page.locator('.note').last().locator('.note-actions button').all()){const box=await button.boundingBox();assert(box.width>=40&&box.height>=40);assert(await button.getAttribute('aria-label'));}

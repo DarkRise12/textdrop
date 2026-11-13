@@ -8,7 +8,8 @@ let noticeKind = '';
 let currentQuery = '', searchTimer = null, feedAbort = null;
 let nextPage = null, feedRevision = null, totalNotes = 0, matchedNotes = 0, loadedThrough = null;
 let olderLoading = false, lastHistoryScroll = 0;
-let selectedFile = null, pendingFileSend = null, uploadRequest = null;
+let selectedFile = null, pendingFileSend = null, uploadRequest = null, storageState = null;
+const expandedSearchMessages = new Set();
 const expandedMessages = new Set(), messagePreviewCache = new Map();
 const notice = (message, kind = '') => {
   noticeKind = kind;
@@ -92,6 +93,7 @@ if (window.visualViewport) {
   fitViewport();
 }
 function session(active, user = currentUser) {
+  resetPasswordVisibility();
   if (active) {
     if (!isUser(user)) throw Error('Не удалось определить учётную запись. Обнови страницу.');
     if (currentUser?.id !== user.id) {
@@ -99,18 +101,19 @@ function session(active, user = currentUser) {
       if (editor) editor.closed = true;
       editor = null; selectedFile = null; pendingFileSend = null; pendingSend = null;
       $('text').value = ''; draftStatus(''); draftReady = false;
-      currentQuery = ''; $('search').value = ''; view = 'chat';
+      currentQuery = ''; $('search').value = ''; view = 'chat'; storageState = null;
       $('workspace').dataset.view = view;
       $('view-chat').setAttribute('aria-pressed', 'true');
       $('view-trash').setAttribute('aria-pressed', 'false');
       $('compose-controls').hidden = false; $('trash-hint').hidden = true;
       clearFeedState(); notes = []; viewLoaded = false; $('notes').replaceChildren();
-      expandedMessages.clear(); messagePreviewCache.clear(); updateAttachment();
+      expandedMessages.clear(); expandedSearchMessages.clear(); messagePreviewCache.clear(); updateAttachment();
     }
     currentUser = user;
     $('account-label').textContent = user.username;
     $('account-button').setAttribute('aria-label', 'Учётная запись ' + user.username);
     $('username').value = user.username;
+    try { localStorage.setItem('textdrop-username-v1', user.username); } catch {}
   }
   $('account-button').hidden = !active;
   if (!active && $('account-dialog').open) $('account-dialog').close();
@@ -132,7 +135,7 @@ function session(active, user = currentUser) {
   }
   if (!active && $('image-viewer').open) closeImageViewer();
   if (!active && $('delete-dialog').open) $('delete-dialog').close('cancel');
-  if (!active) { clearFeedState(); expandedMessages.clear(); messagePreviewCache.clear(); online = false; viewLoaded = false; notes = []; $('notes').replaceChildren(); $('latest').hidden = true; }
+  if (!active) { clearFeedState(); expandedMessages.clear(); expandedSearchMessages.clear(); messagePreviewCache.clear(); online = false; viewLoaded = false; notes = []; $('notes').replaceChildren(); $('latest').hidden = true; }
 }
 function apiError(message, status, kind) {
   return Object.assign(new Error(message), {status, kind});
@@ -350,51 +353,60 @@ function mountMessagePreview(article, text, note, searching) {
   text.id = 'message-text-' + note.id;
   const toggle = document.createElement('button');
   toggle.type = 'button'; toggle.className = 'message-toggle'; toggle.dataset.action = 'toggle-text';
-  toggle.setAttribute('aria-controls', text.id);
-  text.after(toggle);
+  toggle.setAttribute('aria-controls', text.id); text.after(toggle);
+  const query = searching ? currentQuery : '';
+  const choices = searching ? expandedSearchMessages : expandedMessages;
   function update() {
     article.classList.add('note-collapsible');
     const width = text.getBoundingClientRect().width;
     const lineHeight = parseFloat(getComputedStyle(text).lineHeight);
     let cached = messagePreviewCache.get(note.id);
-    if (!cached || cached.text !== note.text || cached.width !== width || cached.lineHeight !== lineHeight) {
-      text.textContent = note.text;
-      const limit = lineHeight * 6 + 1;
-      let end = note.text.length;
-      if (text.getBoundingClientRect().height > limit) {
-        let low = 0, high = end;
-        while (low < high) {
-          const middle = Math.ceil((low + high) / 2);
-          text.textContent = note.text.slice(0, middle).trimEnd() + '…';
-          if (text.getBoundingClientRect().height <= limit) low = middle;
-          else high = middle - 1;
+    if (!cached || cached.text !== note.text || cached.width !== width || cached.lineHeight !== lineHeight || cached.query !== query) {
+      const match = query ? window.TextdropLinks.ranges(note.text, query, 1)[0] : null;
+      let start = match ? Math.max(0, match.start - 70) : 0;
+      if (/[\uDC00-\uDFFF]/u.test(note.text[start] || '')) start--;
+      function fit(from) {
+        const end = match ? Math.min(note.text.length, Math.max(from + 360, match.end + 70)) : note.text.length;
+        const source = note.text.slice(from, end);
+        const display = length => (from ? '…' : '') + source.slice(0, length).trimEnd() + (from + length < note.text.length ? '…' : '');
+        const limit = lineHeight * 6 + 1;
+        text.textContent = display(source.length);
+        let length = source.length;
+        if (text.getBoundingClientRect().height > limit) {
+          let low = 0, high = length;
+          while (low < high) {
+            const middle = Math.ceil((low + high) / 2); text.textContent = display(middle);
+            if (text.getBoundingClientRect().height <= limit) low = middle;
+            else high = middle - 1;
+          }
+          length = source.slice(0, low).trimEnd().length;
         }
-        end = note.text.slice(0, low).trimEnd().length;
-        // A preview must not end halfway through a UTF-16 surrogate pair.
-        if (/[\uD800-\uDBFF]/u.test(note.text[end - 1] || '')) end--;
+        if (/[\uD800-\uDBFF]/u.test(source[length - 1] || '')) length--;
+        return {text: note.text, width, lineHeight, query, start: from, end: from + length};
       }
-      cached = {text: note.text, width, lineHeight, end};
+      cached = fit(start);
+      // Whitespace or large text can consume the preview before the match.
+      if (match && cached.end <= match.start) cached = fit(match.start);
       messagePreviewCache.set(note.id, cached);
     }
-    const long = cached.end < note.text.length;
-    const expanded = searching || expandedMessages.has(note.id);
+    const long = cached.start > 0 || cached.end < note.text.length;
+    const expanded = choices.has(note.id);
     article.classList.toggle('note-collapsible', long);
-    toggle.hidden = !long || searching;
-    toggle.textContent = expanded ? 'Свернуть' : 'Развернуть';
+    toggle.hidden = !long;
+    toggle.textContent = expanded ? 'Свернуть' : searching ? 'Показать полностью' : 'Развернуть';
     toggle.setAttribute('aria-expanded', String(expanded));
-    window.TextdropLinks.append(text, note.text, expanded ? note.text.length : cached.end);
+    window.TextdropLinks.append(text, note.text, expanded ? note.text.length : cached.end, {start: expanded ? 0 : cached.start, query});
   }
   toggle.onclick = () => {
     const history = $('history');
     const top = Math.max(0, article.getBoundingClientRect().top - history.getBoundingClientRect().top);
-    if (expandedMessages.has(note.id)) expandedMessages.delete(note.id);
-    else expandedMessages.add(note.id);
+    if (choices.has(note.id)) choices.delete(note.id); else choices.add(note.id);
     update();
-    // Keep the beginning in view, including when collapsing a message read to its end.
     history.scrollTop += article.getBoundingClientRect().top - history.getBoundingClientRect().top - top;
   };
   return update;
 }
+
 function render({forceBottom = false, searchChanged = false, preserveScroll = false} = {}) {
   const history = $('history');
   const nearBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 80;
@@ -412,6 +424,9 @@ function render({forceBottom = false, searchChanged = false, preserveScroll = fa
   if (editor && !visible.some(note => note.id === editor.id)) visible.push(editor.note);
   const filtered = visible.sort((a, b) => compareNotes(b, a));
   if (view === 'chat') filtered.reverse();
+  $('workspace').classList.toggle('has-query', Boolean(query));
+  $('search-results-label').hidden = !query;
+  $('search-results-label').textContent = viewLoaded ? 'Найдено: ' + matchedNotes : 'Ищем…';
   $('count').textContent = query ? matchedNotes : totalNotes;
   $('count').title = 'Найдено: ' + matchedNotes + '. Всего: ' + totalNotes + '. Загружено: ' + notes.length;
   $('count-label').textContent = query ? 'Найдено:' : view === 'trash' ? 'В корзине:' : 'Всего сообщений:';
@@ -478,7 +493,7 @@ function render({forceBottom = false, searchChanged = false, preserveScroll = fa
       }
       const card = document.createElement('a'); card.className = 'file-download';
       card.href = '/api/files/' + encodeURIComponent(note.id); card.setAttribute('download', note.file.name);
-      const name = document.createElement('span'); name.textContent = note.file.name;
+      const name = document.createElement('span'); window.TextdropLinks.highlight(name, note.file.name, query);
       const detail = document.createElement('span'); detail.className = 'file-detail';
       detail.textContent = formatFileSize(note.file.size) + ' · Скачать';
       card.append(name, detail); article.append(card);
@@ -548,7 +563,7 @@ function feedPath(kind, cursor) {
 }
 function changeSearch(query, delay = 0) {
   generation++;
-  currentQuery = query.trim();
+  currentQuery = query.trim(); expandedSearchMessages.clear();
   clearFeedState(); notes = []; viewLoaded = false; online = false;
   $('latest').hidden = true;
   if (noticeKind === 'sync') notice('');
@@ -723,6 +738,7 @@ $('image-viewer').onclose = () => {
 };
 function formatFileSize(size) {
   if (size < 1024) return size + ' Б';
+  if (size >= 1024 ** 3) return (size / 1024 ** 3).toLocaleString('ru', {maximumFractionDigits: 1}) + ' ГБ';
   if (size < 1024 * 1024) return (size / 1024).toLocaleString('ru', {maximumFractionDigits: 1}) + ' КБ';
   return (size / (1024 * 1024)).toLocaleString('ru', {maximumFractionDigits: 1}) + ' МБ';
 }
@@ -730,6 +746,7 @@ function updateAttachment() {
   $('attachment-selection').hidden = !selectedFile;
   $('attachment-name').textContent = selectedFile ? selectedFile.name + ' · ' + formatFileSize(selectedFile.size) : '';
   $('file-input').value = '';
+  $('attachment-space').textContent = selectedFile && storageState ? 'Свободно: ' + formatFileSize(Math.max(0, storageState.max_storage_bytes - storageState.used_bytes)) + ' · файл до ' + formatFileSize(storageState.max_file_bytes) : '';
   resizeInput();
 }
 $('attach').onclick = () => $('file-input').click();
@@ -742,7 +759,7 @@ $('file-input').onchange = async () => {
     const storage = await api('storage');
     if (current !== generation || $('workspace').hidden) return;
     if (file.size > storage.max_file_bytes) throw Error('Файл слишком большой. Лимит: ' + formatFileSize(storage.max_file_bytes) + '.');
-    selectedFile = file;
+    storageState = storage; selectedFile = file;
     if (pendingFileSend && !samePendingFile(file, pendingFileSend)) pendingFileSend = null;
     updateAttachment(); saveDraft();
     notice(file.size + storage.used_bytes > storage.max_storage_bytes
@@ -766,10 +783,10 @@ function uploadFile(file, text) {
     xhr.setRequestHeader('X-Textdrop-Metadata-Length', String(metadata.length));
     $('upload-feedback').hidden = false;
     $('upload-progress').value = 0; $('upload-status').textContent = 'Загружаем файл…';
-    for (const id of ['attach', 'remove-attachment', 'logout']) $(id).disabled = true;
+    for (const id of ['attach', 'remove-attachment', 'logout', 'account-button']) $(id).disabled = true;
     function finish() {
       uploadRequest = null; $('upload-feedback').hidden = true;
-      for (const id of ['attach', 'remove-attachment', 'logout']) $(id).disabled = false;
+      for (const id of ['attach', 'remove-attachment', 'logout', 'account-button']) $(id).disabled = false;
     }
     xhr.upload.onprogress = event => {
       if (!event.lengthComputable) return;
@@ -866,7 +883,7 @@ async function loadUsers() {
         const label = document.createElement('label'); label.textContent = 'Новый пароль для ' + user.username;
         const input = document.createElement('input'); input.type = 'password'; input.required = true; input.minLength = 7; input.maxLength = 1024; input.autocomplete = 'new-password';
         const submit = document.createElement('button'); submit.textContent = 'Сохранить пароль';
-        label.append(input); form.append(label, submit);
+        label.append(input); form.append(label, submit); passwordControl(input);
         reset.onclick = () => { form.hidden = !form.hidden; if (!form.hidden) input.focus(); };
         form.onsubmit = async event => {
           event.preventDefault(); const actionEpoch = sessionEpoch; submit.disabled = true; accountFeedback('');
@@ -881,21 +898,22 @@ async function loadUsers() {
   } catch (error) { if (epoch === sessionEpoch) { accountFeedback(errorMessage(error)); $('users-retry').hidden = false; } }
 }
 $('account-button').onclick = () => {
-  accountFeedback(''); $('users-list').replaceChildren();
+  accountFeedback(''); $('users-list').replaceChildren(); $('users-retry').hidden = true;
+  setCreateUserOpen(false);
   $('account-identity').textContent = currentUser.username;
   $('account-nav').hidden = currentUser.role !== 'admin';
   accountPane(currentUser.role === 'admin' ? 'users' : 'password');
-  $('account-dialog').showModal();
+  $('account-dialog').showModal(); loadStorage();
   if (currentUser.role === 'admin') loadUsers();
 };
 $('close-account').onclick = () => $('account-dialog').close();
 $('account-dialog').onclose = () => {
-  $('password-form').reset(); $('create-user-form').reset(); $('users-list').replaceChildren();
+  $('password-form').reset(); $('create-user-form').reset(); $('users-list').replaceChildren(); setCreateUserOpen(false);
 };
 $('users-retry').onclick = loadUsers;
 $('create-user-form').onsubmit = async event => {
   event.preventDefault(); const actionEpoch = sessionEpoch, form = event.currentTarget, button = event.submitter; button.disabled = true; accountFeedback('');
-  try { const data = await api('users', 'POST', Object.fromEntries(new FormData(form))); if (actionEpoch !== sessionEpoch) return; form.reset(); await loadUsers(); accountFeedback('Создан пользователь ' + data.user.username + '. Передай ему логин и пароль.', true); }
+  try { const data = await api('users', 'POST', Object.fromEntries(new FormData(form))); if (actionEpoch !== sessionEpoch) return; form.reset(); setCreateUserOpen(false); await loadUsers(); accountFeedback('Создан пользователь ' + data.user.username + '. Передай ему логин и пароль.', true); }
   catch (error) { if (actionEpoch === sessionEpoch) accountFeedback(errorMessage(error)); }
   finally { button.disabled = false; }
 };
@@ -914,3 +932,60 @@ function accountPane(pane) {
 }
 $('account-users-tab').onclick = () => accountPane('users');
 $('account-password-tab').onclick = () => accountPane('password');
+
+function setCreateUserOpen(open) {
+  $('create-user-form').hidden = !open;
+  $('add-user').hidden = open;
+  $('add-user').setAttribute('aria-expanded', String(open));
+  if (!open) $('create-user-form').reset();
+}
+$('add-user').onclick = () => { setCreateUserOpen(true); $('create-user-form').elements.username.focus(); };
+$('cancel-create-user').onclick = () => { setCreateUserOpen(false); $('add-user').focus(); };
+async function loadStorage() {
+  const epoch = sessionEpoch;
+  $('storage-status').textContent = 'Проверяем свободное место…';
+  $('storage-usage').hidden = true; $('storage-retry').hidden = true;
+  try {
+    const data = await api('storage');
+    if (epoch !== sessionEpoch || !$('account-dialog').open) return;
+    storageState = data;
+    $('storage-status').textContent = 'Занято ' + formatFileSize(data.used_bytes) + ' из ' + formatFileSize(data.max_storage_bytes) + '. Свободно ' + formatFileSize(Math.max(0, data.max_storage_bytes - data.used_bytes)) + '.';
+    $('storage-usage').max = data.max_storage_bytes;
+    $('storage-usage').setAttribute('aria-valuetext', formatFileSize(data.used_bytes) + ' из ' + formatFileSize(data.max_storage_bytes));
+    $('storage-usage').value = data.used_bytes; $('storage-usage').hidden = false;
+    updateAttachment();
+  } catch (error) {
+    if (epoch !== sessionEpoch || !$('account-dialog').open) return;
+    $('storage-status').textContent = 'Не удалось проверить свободное место.'; $('storage-retry').hidden = false;
+  }
+}
+$('storage-retry').onclick = loadStorage;
+let passwordFieldId = 0;
+function passwordControl(input) {
+  if (!input.id) input.id = 'password-field-' + ++passwordFieldId;
+  const label = input.closest('label');
+  const wrapper = document.createElement('div'); wrapper.className = 'password-field';
+  if (label) {
+    const group = document.createElement('div'); group.className = 'password-control';
+    label.before(group); group.append(label, wrapper); label.htmlFor = input.id;
+  } else input.before(wrapper);
+  const button = document.createElement('button'); button.type = 'button'; button.className = 'quiet password-toggle';
+  button.setAttribute('aria-controls', input.id); button.setAttribute('aria-pressed', 'false'); button.textContent = 'Показать';
+  const caption = label?.textContent.trim() || input.labels?.[0]?.textContent.trim() || 'пароль';
+  button.setAttribute('aria-label', 'Показать: ' + caption);
+  button.onclick = () => {
+    const visible = input.type === 'password'; input.type = visible ? 'text' : 'password';
+    button.textContent = visible ? 'Скрыть' : 'Показать'; button.setAttribute('aria-pressed', String(visible));
+    button.setAttribute('aria-label', (visible ? 'Скрыть: ' : 'Показать: ') + caption);
+  };
+  wrapper.append(input, button);
+}
+function resetPasswordVisibility(root = document) {
+  for (const field of root.querySelectorAll('.password-field')) {
+    const input = field.querySelector('input'), button = field.querySelector('button');
+    if (input.type !== 'password') button.click();
+  }
+}
+document.querySelectorAll('input[type="password"]').forEach(passwordControl);
+document.addEventListener('reset', event => resetPasswordVisibility(event.target));
+try { const username = localStorage.getItem('textdrop-username-v1'); if (/^[a-z0-9][a-z0-9._-]{2,31}$/.test(username || '')) $('username').value = username; } catch {}

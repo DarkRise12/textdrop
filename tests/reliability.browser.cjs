@@ -12,7 +12,7 @@ const fs=require('node:fs');const os=require('node:os');const path=require('node
   const port=await ready(server);
   browser=await chromium.launch({headless:true});
   const context=await browser.newContext();const page=await context.newPage();
-  await page.goto('http://127.0.0.1:'+port);await page.locator('#password').fill(password);await page.locator('#login-form button').click();await page.locator('#workspace').waitFor();
+  await page.goto('http://127.0.0.1:'+port);await page.locator('#username').fill('admin');await page.locator('#password').fill(password);await page.locator('#login-form button[type=submit]').click();await page.locator('#workspace').waitFor();
   await page.locator('#text').fill('Черновик\nс переносом 😀');await page.reload();await page.locator('#workspace').waitFor();assert.equal(await page.locator('#text').inputValue(),'Черновик\nс переносом 😀');
   // Commit on the server, then lose the response received by the browser.
   await page.route('**/api/notes',async route=>{
@@ -67,15 +67,15 @@ const fs=require('node:fs');const os=require('node:os');const path=require('node
   await page.evaluate(()=>sync());assert(await page.locator('#notice').isHidden());
   // Authentication expiry preserves the draft through re-login.
   await page.locator('#text').fill('Сохранить при истечении сессии');await context.clearCookies();await page.evaluate(()=>sync());await page.locator('#login').waitFor();
-  await page.locator('#password').fill(password);await page.locator('#login-form button').click();await page.locator('#workspace').waitFor();assert.equal(await page.locator('#text').inputValue(),'Сохранить при истечении сессии');
+  await page.locator('#username').fill('admin');await page.locator('#password').fill(password);await page.locator('#login-form button[type=submit]').click();await page.locator('#workspace').waitFor();assert.equal(await page.locator('#text').inputValue(),'Сохранить при истечении сессии');
   // Don't erase text typed while a previous message is being acknowledged.
   let release,committed;const gate=new Promise(r=>release=r),seen=new Promise(r=>committed=r);
   await page.route('**/api/notes',async route=>{if(route.request().method()==='POST'){const response=await route.fetch();committed();await gate;await route.fulfill({response});}else await route.continue();});
   await page.locator('#send').click();await seen;await page.locator('#text').fill('Следующий черновик');release();
   await page.waitForFunction(()=>!document.querySelector('#send').classList.contains('sending'));
   assert.equal(await page.locator('#text').inputValue(),'Следующий черновик');assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('textdrop-draft-v1')).text),'Следующий черновик');
-  await page.unroute('**/api/notes');await page.locator('#logout').click();await page.locator('#login').waitFor();assert.equal(await page.evaluate(()=>localStorage.getItem('textdrop-draft-v1')),null);
-  await page.locator('#password').fill(password);await page.locator('#login-form button').click();await page.locator('#workspace').waitFor();assert.equal(await page.locator('#text').inputValue(),'');
+  await page.unroute('**/api/notes');await page.locator('#account-button').click();await page.locator('#logout').click();await page.locator('#login').waitFor();assert.equal(await page.evaluate(()=>localStorage.getItem('textdrop-draft-v1')),null);
+  await page.locator('#username').fill('admin');await page.locator('#password').fill(password);await page.locator('#login-form button[type=submit]').click();await page.locator('#workspace').waitFor();assert.equal(await page.locator('#text').inputValue(),'');
   const blocked=await context.newPage();
   await blocked.addInitScript(()=>{const original=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key==='textdrop-draft-v1')throw new DOMException('Quota exceeded','QuotaExceededError');return original.call(this,key,value);};});
   await blocked.goto('http://127.0.0.1:'+port);await blocked.locator('#workspace').waitFor();

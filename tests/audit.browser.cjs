@@ -27,8 +27,8 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
     const context = await browser.newContext(), page = await context.newPage();
     const idle = () => page.waitForFunction(() => viewLoaded && !loading && !searchTimer);
     const login = async () => {
-      await page.locator('#password').fill('review-test-password');
-      await page.locator('#login-form button').click(); await idle();
+      await page.locator('#username').fill('admin');await page.locator('#password').fill('review-test-password');
+      await page.locator('#login-form button[type=submit]').click(); await idle();
     };
     await page.goto(base); await login();
     const choose = async () => {
@@ -54,7 +54,7 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
       } else await route.continue();
     });
     await page.locator('#text').fill('same draft text'); await page.locator('#send').click(); await seen;
-    await page.locator('#logout').click(); await page.locator('#login').waitFor(); await login();
+    await page.locator('#account-button').click();await page.locator('#logout').click(); await page.locator('#login').waitFor(); await login();
     await page.locator('#text').fill('same draft text');
     const draftBefore = await page.locator('#text').inputValue(); release();
     await page.waitForFunction(() => !document.getElementById('send').classList.contains('sending'));

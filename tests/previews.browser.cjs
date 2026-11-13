@@ -42,7 +42,7 @@ print(json.dumps(result))
     page.on('request',request=>{const pathname=new URL(request.url()).pathname;if(request.method()==='GET'&&/^\/api\/files\/[a-f0-9]+$/.test(pathname))originals.push(pathname);if(pathname.endsWith('/preview'))previews.push(pathname);});
     const idle = () => page.waitForFunction(()=>!loading&&!searchTimer&&viewLoaded);
     const sync = async()=>{await idle();await page.evaluate(()=>sync());await idle();};
-    const login = async()=>{await page.locator('#password').fill(password);await page.locator('#login-form button').click();await idle();};
+    const login = async()=>{await page.locator('#username').fill('admin');await page.locator('#password').fill(password);await page.locator('#login-form button[type=submit]').click();await idle();};
     await page.goto(base);await login();
     await page.waitForFunction(()=>[...document.querySelectorAll('.image-preview img')].some(image=>image.complete&&image.naturalWidth>0));
     await page.waitForTimeout(700);

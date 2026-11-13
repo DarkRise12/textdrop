@@ -15,7 +15,7 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
     const a = await ca.newPage(), b = await cb.newPage(), errors = [];
     const idle = page => page.waitForFunction(() => !loading && !searchTimer && viewLoaded);
     const sync = async page => {await idle(page); await page.evaluate(() => sync()); await idle(page);};
-    const login = async page => {await page.locator('#password').fill(password); await page.locator('#login-form button').click(); await idle(page);};
+    const login = async page => {await page.locator('#username').fill('admin');await page.locator('#password').fill(password); await page.locator('#login-form button[type=submit]').click(); await idle(page);};
     for (const page of [a, b]) {page.on('pageerror', error => errors.push(error.message)); await page.goto(base); await login(page);}
     const binary = Buffer.alloc(100000); for (let i = 0; i < binary.length; i++) binary[i] = i % 256;
     const choose = async (page, name, bytes) => {await page.locator('#file-input').setInputFiles({name, mimeType: 'application/octet-stream', buffer: bytes}); await page.locator('#attachment-selection').waitFor();};

@@ -105,11 +105,15 @@ const fs = require('node:fs'), path = require('node:path'), os = require('node:o
     }));
     await item('long').getByRole('button', {name: 'Копировать', exact: true}).click();
     assert.equal(await page.evaluate(() => window.copiedText), longText);
-    // Search reveals matches beyond the preview without changing the manual choice.
+    // Search shows a marked excerpt around the match and can open the full original.
     await page.locator('#search-toggle').click(); await page.locator('#search').fill('Уникальный хвост');
     await page.waitForFunction(() => viewLoaded && !loading && !searchTimer);
     assert.equal(await page.locator('.note').count(), 1);
-    assert.equal(await body('long').textContent(), longText); assert(await toggle('long').isHidden());
+    assert((await body('long').textContent()).includes('Уникальный хвост'));
+    assert.notEqual(await body('long').textContent(), longText);
+    assert.equal(await body('long').locator('mark').textContent(), 'Уникальный хвост');
+    assert.equal(await expanded('long'), 'false');
+    await toggle('long').click(); assert.equal(await body('long').textContent(), longText);
     await page.locator('#search').press('Escape'); await page.waitForFunction(() => viewLoaded && !loading && !searchTimer); assert.equal(await expanded('long'), 'false');
     // Editing always starts with the original, full value, even from a collapsed message.
     await item('long').getByRole('button', {name: 'Изменить', exact: true}).click();

@@ -29,8 +29,8 @@ with store.connect() as db:
     const sync = async () => {await idle(); await page.evaluate(() => sync()); await idle();};
     const id = index => index.toString(16).padStart(32, '0');
     const item = index => page.locator(`.note[data-id="${id(index)}"]`);
-    await page.goto(base); await page.locator('#password').fill(password);
-    const start = Date.now(); await page.locator('#login-form button').click(); await idle();
+    await page.goto(base); await page.locator('#username').fill('admin');await page.locator('#password').fill(password);
+    const start = Date.now(); await page.locator('#login-form button[type=submit]').click(); await idle();
     const initialMs = Date.now() - start;
     assert.equal(await page.locator('.note').count(), 50); assert.equal(await page.locator('#count').textContent(), '10000');
     assert.equal(reads.filter(url => new URL(url).pathname.endsWith('/page')).length, 1);

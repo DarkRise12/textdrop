@@ -13,7 +13,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),asse
   const ca=await browser.newContext({viewport:{width:1280,height:850},colorScheme:'light'}),cb=await browser.newContext({viewport:{width:390,height:844},colorScheme:'dark'});
   const a=await ca.newPage(),b=await cb.newPage();
   const errors=[];for(const page of [a,b])page.on('pageerror',e=>errors.push(e.message));
-  async function login(page){await page.locator('#password').fill('test-edit-password-12345');await page.locator('#login-form button').click();await page.locator('#workspace').waitFor();await page.waitForFunction(()=>!loading);}
+  async function login(page){await page.locator('#username').fill('admin');await page.locator('#password').fill('test-edit-password-12345');await page.locator('#login-form button[type=submit]').click();await page.locator('#workspace').waitFor();await page.waitForFunction(()=>!loading);}
   for(const page of [a,b]){await page.goto(base);await login(page);}
   const first=await (await ca.request.post(base+'/api/notes',{data:{text:'Первое сообщение\nВторая строка'}})).json();
   await ca.request.post(base+'/api/notes',{data:{text:'Более новое сообщение'}});

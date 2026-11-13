@@ -22,3 +22,15 @@ test('handles repeated, adjacent and long links without losing text',()=>{
   assert.equal(parts(text).map(p=>p.text).join(''),text);
  }
 });
+
+test('search matches map Unicode casefold expansions to the original characters',()=>{
+ const ranges=(text,query)=>Array.from(context.window.TextdropLinks.ranges(text,query),range=>({...range}));
+ assert.deepEqual(ranges('Начало ПРОЕКТ конец','проект'),[{start:7,end:13}]);
+ assert.deepEqual(ranges('😀Straße','STRASSE'),[{start:2,end:8}]);
+ assert.deepEqual(ranges('ß','s'),[{start:0,end:1}]);
+ assert.deepEqual(ranges('ΟΣ ος','οσ'),[{start:0,end:2},{start:3,end:5}]);
+ assert.deepEqual(ranges('ﬃ','ffi'),[{start:0,end:1}]);
+ assert.deepEqual(ranges('<img src=x>', 'img'),[{start:1,end:4}]);
+ assert.deepEqual(ranges('abc',''),[]);
+ assert.deepEqual(ranges('a'.repeat(100000),'a'),[{start:0,end:300}]);
+});
