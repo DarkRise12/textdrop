@@ -32,10 +32,15 @@
     if (offset < text.length) result.push({text: text.slice(offset)});
     return result;
   }
-  function append(container, text) {
+  function append(container, text, end = text.length) {
     const fragment = document.createDocumentFragment();
+    let offset = 0;
     for (const part of parts(text)) {
-      if (!part.href) fragment.append(document.createTextNode(part.text));
+      if (offset >= end) break;
+      const visible = part.text.slice(0, end - offset);
+      offset += part.text.length;
+      // A truncated URL stays plain text so it cannot open a different address.
+      if (!part.href || visible.length < part.text.length) fragment.append(document.createTextNode(visible));
       else {
         const link = document.createElement('a');
         link.href = part.href;
@@ -45,6 +50,7 @@
         fragment.append(link);
       }
     }
+    if (end < text.length) fragment.append(document.createTextNode('…'));
     container.replaceChildren(fragment);
   }
   window.TextdropLinks = {parts, append};

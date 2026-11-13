@@ -188,3 +188,9 @@ input[type="search"] { min-height: 40px; }
   .note { padding: 10px 12px 7px; }
   .composer-area { padding: 12px 12px max(8px, env(safe-area-inset-bottom)); }
 }
+
+.note-collapsible { width: 100%; }
+.message-toggle { display: block; min-height: 40px; padding: 8px 0; margin-top: 4px; background: transparent; color: var(--accent-ink); font-size: 13px; text-align: left; }
+.message-toggle:hover { background: transparent; color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; }
+.message-toggle[aria-expanded="true"] { position: sticky; bottom: 0; z-index: 1; width: 100%; background: var(--bubble); }
+.latest { z-index: 2; }

@@ -4,6 +4,7 @@ let notes = [], loading = false, generation = 0, online = false;
 let editor = null;
 let view = 'chat', syncAgain = false, viewLoaded = false;
 let noticeKind = '';
+const expandedMessages = new Set(), messagePreviewCache = new Map();
 const notice = (message, kind = '') => {
   noticeKind = kind;
   $('notice').classList.toggle('success', kind === 'success');
@@ -90,7 +91,7 @@ function session(active) {
     requestAnimationFrame(resizeInput);
   }
   if (!active && $('delete-dialog').open) $('delete-dialog').close('cancel');
-  if (!active) { online = false; viewLoaded = false; notes = []; $('notes').replaceChildren(); $('latest').hidden = true; }
+  if (!active) { expandedMessages.clear(); messagePreviewCache.clear(); online = false; viewLoaded = false; notes = []; $('notes').replaceChildren(); $('latest').hidden = true; }
 }
 function apiError(message, status, kind) {
   return Object.assign(new Error(message), {status, kind});
@@ -284,6 +285,56 @@ function actionLabel(button, label) {
   text.textContent = label; button.setAttribute('aria-label', label); button.title = label;
   button.querySelector('path').setAttribute('d', label === 'Скопировано' ? 'm5 12 4 4 10-10' : actionPaths[button.dataset.action]);
 }
+// Measure real wrapped lines at the current width; keep only visible text in the DOM.
+function mountMessagePreview(article, text, note, searching) {
+  text.id = 'message-text-' + note.id;
+  const toggle = document.createElement('button');
+  toggle.type = 'button'; toggle.className = 'message-toggle'; toggle.dataset.action = 'toggle-text';
+  toggle.setAttribute('aria-controls', text.id);
+  text.after(toggle);
+  function update() {
+    article.classList.add('note-collapsible');
+    const width = text.getBoundingClientRect().width;
+    const lineHeight = parseFloat(getComputedStyle(text).lineHeight);
+    let cached = messagePreviewCache.get(note.id);
+    if (!cached || cached.text !== note.text || cached.width !== width || cached.lineHeight !== lineHeight) {
+      text.textContent = note.text;
+      const limit = lineHeight * 6 + 1;
+      let end = note.text.length;
+      if (text.getBoundingClientRect().height > limit) {
+        let low = 0, high = end;
+        while (low < high) {
+          const middle = Math.ceil((low + high) / 2);
+          text.textContent = note.text.slice(0, middle).trimEnd() + '…';
+          if (text.getBoundingClientRect().height <= limit) low = middle;
+          else high = middle - 1;
+        }
+        end = note.text.slice(0, low).trimEnd().length;
+        // A preview must not end halfway through a UTF-16 surrogate pair.
+        if (/[\uD800-\uDBFF]/u.test(note.text[end - 1] || '')) end--;
+      }
+      cached = {text: note.text, width, lineHeight, end};
+      messagePreviewCache.set(note.id, cached);
+    }
+    const long = cached.end < note.text.length;
+    const expanded = searching || expandedMessages.has(note.id);
+    article.classList.toggle('note-collapsible', long);
+    toggle.hidden = !long || searching;
+    toggle.textContent = expanded ? 'Свернуть' : 'Развернуть';
+    toggle.setAttribute('aria-expanded', String(expanded));
+    window.TextdropLinks.append(text, note.text, expanded ? note.text.length : cached.end);
+  }
+  toggle.onclick = () => {
+    const history = $('history');
+    const top = Math.max(0, article.getBoundingClientRect().top - history.getBoundingClientRect().top);
+    if (expandedMessages.has(note.id)) expandedMessages.delete(note.id);
+    else expandedMessages.add(note.id);
+    update();
+    // Keep the beginning in view, including when collapsing a message read to its end.
+    history.scrollTop += article.getBoundingClientRect().top - history.getBoundingClientRect().top - top;
+  };
+  return update;
+}
 function render({forceBottom = false, searchChanged = false} = {}) {
   const history = $('history');
   const nearBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 80;
@@ -304,6 +355,9 @@ function render({forceBottom = false, searchChanged = false} = {}) {
   $('empty').hidden = !viewLoaded || notes.length > 0 || !!editor;
   $('no-results').hidden = !notes.length || filtered.length > 0;
   const fragment = document.createDocumentFragment();
+  const previews = [];
+  const knownIds = new Set(visible.map(note => note.id));
+  for (const id of messagePreviewCache.keys()) if (!knownIds.has(id)) messagePreviewCache.delete(id);
   let previousDay = '';
   for (const note of filtered) {
     const date = new Date(view === 'trash' ? note.deleted : note.created);
@@ -346,15 +400,19 @@ function render({forceBottom = false, searchChanged = false} = {}) {
       actionLabel(copy, 'Копировать'); actionLabel(edit, 'Изменить'); actionLabel(remove, 'Удалить');
       actions.append(copy, edit, remove); meta.append(time, actions);
     }
-    const text = document.createElement('pre'); text.className = 'note-text'; window.TextdropLinks.append(text, note.text);
+    const text = document.createElement('pre'); text.className = 'note-text';
     if (editor?.id === note.id) {
       article.classList.add('note-editing');
       actions.hidden = true;
       article.append(editor.element, meta);
-    } else article.append(text, meta);
+    } else {
+      article.append(text, meta);
+      previews.push(mountMessagePreview(article, text, note, Boolean(query)));
+    }
     fragment.append(article);
   }
   $('notes').replaceChildren(fragment);
+  for (const update of previews) update();
   if (view === 'trash') { history.scrollTop = searchChanged ? 0 : previousTop; $('latest').hidden = true; }
   else if (forceBottom || (!searchChanged && nearBottom)) latest();
   else if (searchChanged) { history.scrollTop = query ? 0 : history.scrollHeight; $('latest').hidden = true; }
@@ -369,6 +427,13 @@ function render({forceBottom = false, searchChanged = false} = {}) {
     if (selection && target) target.setSelectionRange(...selection);
   }
 }
+let historyWidth = 0;
+new ResizeObserver(([entry]) => {
+  const width = entry.contentRect.width;
+  if (width === historyWidth) return;
+  historyWidth = width;
+  if (viewLoaded && !$('workspace').hidden) render();
+}).observe($('history'));
 async function sync() {
   if ($('workspace').hidden) return;
   if (loading) { syncAgain = true; return; }
