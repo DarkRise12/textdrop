@@ -101,6 +101,7 @@ function session(active) {
     if (!draftReady) restoreDraft();
     requestAnimationFrame(resizeInput);
   }
+  if (!active && $('image-viewer').open) closeImageViewer();
   if (!active && $('delete-dialog').open) $('delete-dialog').close('cancel');
   if (!active) { clearFeedState(); expandedMessages.clear(); messagePreviewCache.clear(); online = false; viewLoaded = false; notes = []; $('notes').replaceChildren(); $('latest').hidden = true; }
 }
@@ -373,6 +374,7 @@ function render({forceBottom = false, searchChanged = false, preserveScroll = fa
   const selection = focusAction === 'edit-text' ? [focused.selectionStart, focused.selectionEnd] : null;
   const query = currentQuery;
   const visible = notes.slice();
+  if ($('image-viewer').open && !notes.some(note => note.id === $('image-viewer').dataset.noteId)) closeImageViewer();
   if (editor && !visible.some(note => note.id === editor.id)) visible.push(editor.note);
   const filtered = visible.sort((a, b) => compareNotes(b, a));
   if (view === 'chat') filtered.reverse();
@@ -431,6 +433,15 @@ function render({forceBottom = false, searchChanged = false, preserveScroll = fa
     const text = document.createElement('pre'); text.className = 'note-text';
     if (note.file) {
       article.classList.add('note-file');
+      if (note.file.preview) {
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'image-preview';
+        button.dataset.action = 'preview'; button.setAttribute('aria-label', 'Открыть фотографию ' + note.file.name);
+        const image = document.createElement('img'); image.width = 640; image.height = 480;
+        image.loading = 'lazy'; image.decoding = 'async'; image.alt = 'Фото: ' + note.file.name;
+        image.src = '/api/files/' + encodeURIComponent(note.id) + '/preview';
+        image.onerror = () => { button.remove(); };
+        button.append(image); button.onclick = () => showImage(note, button); article.append(button);
+      }
       const card = document.createElement('a'); card.className = 'file-download';
       card.href = '/api/files/' + encodeURIComponent(note.id); card.setAttribute('download', note.file.name);
       const name = document.createElement('span'); name.textContent = note.file.name;
@@ -648,6 +659,30 @@ $('compose').onsubmit = async event => {
     notice(errorMessage(error));
   }
   finally { button.classList.remove('sending'); button.setAttribute('aria-label', 'Отправить сообщение'); resizeInput(); }
+};
+let imageOpener = null;
+function showImage(note, opener) {
+  imageOpener = opener;
+  const viewer = $('image-viewer'); viewer.dataset.noteId = note.id;
+  $('image-viewer-title').textContent = note.file.name;
+  $('viewer-image').alt = note.file.name;
+  $('viewer-image').onerror = () => { closeImageViewer(); notice('Предпросмотр недоступен. Оригинал можно скачать из сообщения.'); };
+  $('viewer-image').src = '/api/files/' + encodeURIComponent(note.id) + '/preview';
+  $('download-original').href = '/api/files/' + encodeURIComponent(note.id);
+  $('download-original').setAttribute('download', note.file.name);
+  viewer.showModal(); $('close-image-viewer').focus();
+}
+function closeImageViewer() {
+  $('viewer-image').onerror = null; $('viewer-image').removeAttribute('src');
+  $('download-original').removeAttribute('href'); $('image-viewer-title').textContent = '';
+  if ($('image-viewer').open) $('image-viewer').close();
+}
+$('close-image-viewer').onclick = closeImageViewer;
+$('image-viewer').onclick = event => { if (event.target === $('image-viewer')) closeImageViewer(); };
+$('image-viewer').onclose = () => {
+  closeImageViewer();
+  if (!$('workspace').hidden) (imageOpener?.isConnected ? imageOpener : $('history')).focus({preventScroll: true});
+  imageOpener = null;
 };
 function formatFileSize(size) {
   if (size < 1024) return size + ' Б';

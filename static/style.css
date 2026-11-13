@@ -211,3 +211,13 @@ input[type="search"] { min-height: 40px; }
 .file-download > :first-child { font-weight: 600; }
 .file-detail { color: var(--muted); font-size: 12px; text-decoration: none; }
 .note-file { min-width: min(280px, 94%); }
+
+.image-preview { display: block; width: 100%; max-width: 280px; aspect-ratio: 4 / 3; padding: 0; margin-bottom: 8px; overflow: hidden; border-radius: 8px; background: var(--bg); }
+.image-preview:hover { background: var(--bg); }
+.image-preview img { display: block; width: 100%; height: 100%; object-fit: contain; }
+#image-viewer { max-width: 760px; padding: 16px; }
+.viewer-top { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.viewer-top h2 { flex: 1; min-width: 0; overflow-wrap: anywhere; margin: 0; font-size: 15px; }
+#close-image-viewer { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; padding: 10px; }
+#viewer-image { display: block; max-width: 100%; max-height: 65dvh; width: auto; height: auto; object-fit: contain; margin: 0 auto 12px; }
+.download-original { display: inline-block; padding: 12px 4px; min-height: 44px; color: var(--accent-ink); text-underline-offset: 3px; }

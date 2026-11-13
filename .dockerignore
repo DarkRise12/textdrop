@@ -3,3 +3,6 @@
 !static/
 !static/**
 !backup.py
+
+!requirements.txt
+!preview.py

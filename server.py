@@ -9,6 +9,8 @@ import re
 import secrets
 import sqlite3
 import sys
+import struct
+import subprocess
 import tempfile
 import threading
 import unicodedata
@@ -27,12 +29,15 @@ SEARCH_LIMIT = 256
 FILE_LIMIT = 125 * 1024 * 1024
 STORAGE_LIMIT = 3 * 1024 * 1024 * 1024
 LIMIT = 100_000
+PREVIEW_VERSION = 1
+PREVIEW_INPUT_LIMIT = 32 * 1024 * 1024
+PREVIEW_BYTE_LIMIT = 100 * 1024
 TRASH_LIFETIME = 30 * 24 * 60 * 60 * 1000
-ATTACHMENT_SELECT = ', a.name AS attachment_name, a.size AS attachment_size, a.sha256 AS attachment_sha256 '
+ATTACHMENT_SELECT = ', a.name AS attachment_name, a.size AS attachment_size, a.sha256 AS attachment_sha256, i.eligible AS attachment_preview '
 NOTE_SELECT = ('SELECT n.id, n.text, n.created, COALESCE(v.version, 0) AS version, v.updated'
                + ATTACHMENT_SELECT + 'FROM notes n LEFT JOIN note_versions v ON v.note_id = n.id '
-               'LEFT JOIN attachments a ON a.note_id = n.id')
-TRASH_SELECT = 'SELECT n.*' + ATTACHMENT_SELECT + 'FROM trash n LEFT JOIN attachments a ON a.note_id = n.id'
+               'LEFT JOIN attachments a ON a.note_id = n.id LEFT JOIN attachment_images i ON i.note_id = n.id')
+TRASH_SELECT = 'SELECT n.*' + ATTACHMENT_SELECT + 'FROM trash n LEFT JOIN attachments a ON a.note_id = n.id LEFT JOIN attachment_images i ON i.note_id = n.id'
 
 
 def note_record(row):
@@ -40,9 +45,22 @@ def note_record(row):
     name = note.pop('attachment_name', None)
     size = note.pop('attachment_size', None)
     digest = note.pop('attachment_sha256', None)
+    preview = note.pop('attachment_preview', None)
     if name is not None:
         note['file'] = {'name': name, 'size': size, 'sha256': digest}
+        if preview:
+            note['file']['preview'] = True
     return note
+
+
+def preview_candidate(header, size):
+    return size <= PREVIEW_INPUT_LIMIT and (header.startswith(b'\x89PNG\r\n\x1a\n')
+        or header.startswith(b'\xff\xd8\xff') or header.startswith((b'GIF87a', b'GIF89a'))
+        or header[:4] == b'RIFF' and header[8:12] == b'WEBP')
+
+
+class PreviewBusy(Exception):
+    pass
 
 
 class UploadLimit(ValueError):
@@ -67,6 +85,7 @@ class EditConflict(RequestConflict):
 class Store:
     def __init__(self, path, file_limit=FILE_LIMIT, storage_limit=STORAGE_LIMIT):
         self.path = path
+        self.preview_lock = threading.Lock()
         if file_limit <= 0 or storage_limit <= 0:
             raise ValueError('File storage limits must be positive.')
         self.file_limit, self.storage_limit = file_limit, storage_limit
@@ -84,6 +103,18 @@ class Store:
                 sha256 TEXT NOT NULL, body BLOB NOT NULL)''')
             db.execute('''CREATE TABLE IF NOT EXISTS file_requests (
                 request_id TEXT PRIMARY KEY, note_id TEXT NOT NULL, fingerprint TEXT NOT NULL)''')
+            db.execute('''CREATE TABLE IF NOT EXISTS attachment_images (
+                note_id TEXT PRIMARY KEY, eligible INTEGER NOT NULL, version INTEGER NOT NULL DEFAULT 0,
+                width INTEGER, height INTEGER, body BLOB)''')
+            db.execute('''CREATE TRIGGER IF NOT EXISTS preview_cleanup AFTER DELETE ON attachments BEGIN
+                DELETE FROM attachment_images WHERE note_id=OLD.note_id;
+                END''')
+            # Backfill only tiny headers of files saved by earlier images; never SELECT the BLOB.
+            for record in db.execute('''SELECT a.rowid, a.note_id, a.size FROM attachments a
+                LEFT JOIN attachment_images i ON i.note_id=a.note_id WHERE i.note_id IS NULL''').fetchall():
+                with db.blobopen('attachments', 'body', record['rowid'], readonly=True) as blob:
+                    eligible = preview_candidate(blob.read(16), record['size'])
+                db.execute('INSERT INTO attachment_images(note_id, eligible) VALUES (?, ?)', (record['note_id'], int(eligible)))
             for table in ('notes', 'trash'):
                 db.execute(f'''CREATE TRIGGER IF NOT EXISTS attachments_cleanup_{table}
                     AFTER DELETE ON {table} BEGIN
@@ -246,9 +277,13 @@ class Store:
                 db.execute('INSERT INTO send_requests VALUES (?, ?, ?)', (request_id, note['id'], digest))
         return note
 
+    @staticmethod
+    def used_file_bytes(db):
+        return db.execute('SELECT COALESCE((SELECT sum(size) FROM attachments),0) + COALESCE((SELECT sum(length(body)) FROM attachment_images),0)').fetchone()[0]
+
     def storage(self):
         with self.connect() as db:
-            used = db.execute('SELECT COALESCE(sum(size), 0) FROM attachments').fetchone()[0]
+            used = self.used_file_bytes(db)
         return dict(used_bytes=used, max_file_bytes=self.file_limit, max_storage_bytes=self.storage_limit)
 
     def add_file(self, stream, size, name, text, request_id, digest):
@@ -272,9 +307,11 @@ class Store:
                 if row is None:
                     raise RequestGone('Файл уже отправлен и удалён. Повтор не восстановит его.')
                 return note_record(row)
-            used = db.execute('SELECT COALESCE(sum(size), 0) FROM attachments').fetchone()[0]
+            used = self.used_file_bytes(db)
             if used + size > self.storage_limit:
                 raise UploadLimit('Хранилище файлов заполнено. Освободи место, удалив файлы из корзины.')
+            header = stream.read(16); stream.seek(0)
+            eligible = preview_candidate(header, size)
             note_id = secrets.token_hex(16)
             db.execute('INSERT INTO attachments VALUES (?, ?, ?, ?, zeroblob(?))', (note_id, name, size, digest, size))
             rowid = db.execute('SELECT rowid FROM attachments WHERE note_id = ?', (note_id,)).fetchone()[0]
@@ -288,6 +325,7 @@ class Store:
                     blob.write(chunk); checksum.update(chunk); remaining -= len(chunk)
                 if stream.read(1) or checksum.hexdigest() != digest:
                     raise ValueError('Содержимое файла не совпало. Повтори отправку.')
+            db.execute('INSERT INTO attachment_images(note_id, eligible) VALUES (?, ?)', (note_id, int(eligible)))
             db.execute('INSERT INTO notes VALUES (?, ?, ?)', (note_id, text, int(time.time() * 1000)))
             db.execute('INSERT INTO file_requests VALUES (?, ?, ?)', (request_id, note_id, fingerprint))
             return note_record(db.execute(NOTE_SELECT + ' WHERE n.id = ?', (note_id,)).fetchone())
@@ -307,6 +345,55 @@ class Store:
                 yield row, blob
         finally:
             db.close()
+
+    @staticmethod
+    def preview_row(db, note_id):
+        row = db.execute("""SELECT i.* FROM attachment_images i JOIN attachments a ON a.note_id=i.note_id
+            WHERE i.note_id=? AND (EXISTS (SELECT 1 FROM notes WHERE id=i.note_id)
+            OR EXISTS (SELECT 1 FROM trash WHERE id=i.note_id AND expires>?))""",
+            (note_id, int(time.time() * 1000))).fetchone()
+        if row is None:
+            raise RequestGone('Изображение удалено или срок хранения истёк.')
+        return row
+
+    def preview(self, note_id):
+        with self.connect() as db:
+            row = self.preview_row(db, note_id)
+            if not row['eligible'] or row['version'] == PREVIEW_VERSION:
+                return row['body']
+        if not self.preview_lock.acquire(timeout=15):
+            raise PreviewBusy()
+        try:
+            with self.connect() as db:
+                row = self.preview_row(db, note_id)
+                if row['version'] == PREVIEW_VERSION:
+                    return row['body']
+            body, width, height = None, None, None
+            with tempfile.TemporaryDirectory(prefix='.preview-', dir=Path(self.path).parent) as directory:
+                source = Path(directory) / 'source'
+                with self.download(note_id) as (_, blob), source.open('wb') as output:
+                    while chunk := blob.read(65536):
+                        output.write(chunk)
+                try:
+                    result = subprocess.run([sys.executable, str(ROOT / 'preview.py'), str(source)],
+                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=8, check=False)
+                    if result.returncode == 0 and 8 < len(result.stdout) <= PREVIEW_BYTE_LIMIT + 8:
+                        width, height = struct.unpack('>II', result.stdout[:8])
+                        candidate = result.stdout[8:]
+                        if 1 <= width <= 640 and 1 <= height <= 640 and candidate.startswith(b'\xff\xd8') and candidate.endswith(b'\xff\xd9'):
+                            body = candidate
+                except subprocess.TimeoutExpired:
+                    pass
+            with self.connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                self.preview_row(db, note_id)  # Deletion while processing must not create an orphan.
+                if body is not None and self.used_file_bytes(db) + len(body) > self.storage_limit:
+                    return None
+                db.execute('UPDATE attachment_images SET version=?, width=?, height=?, body=? WHERE note_id=?',
+                    (PREVIEW_VERSION, width, height, body, note_id))
+            return body
+        finally:
+            self.preview_lock.release()
 
     def edit(self, note_id, text, version):
         if not isinstance(text, str) or len(text) > LIMIT:
@@ -441,6 +528,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(200, self.server.app.store.storage())
                 except sqlite3.Error:
                     return self.reply(503, {'error': 'Не удалось проверить хранилище.'})
+            preview_match = re.fullmatch(r'/api/files/([a-f0-9]{32})/preview', path)
+            if preview_match:
+                return self.image_preview(preview_match[1])
             file_match = re.fullmatch(r'/api/files/([a-f0-9]{32})', path)
             if file_match:
                 return self.download_file(file_match[1])
@@ -481,6 +571,34 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(404, {'error': 'Не найдено.'})
         name, mime = files[path]
         self.reply(200, (ROOT / 'static' / name).read_bytes(), content_type=mime + '; charset=utf-8')
+
+    def image_preview(self, note_id):
+        try:
+            body = self.server.app.store.preview(note_id)
+            if body is None:
+                return self.reply(415, {'error': 'Для этого файла предпросмотр недоступен.'})
+            etag = '"' + hashlib.sha256(body).hexdigest() + '"'
+            unchanged = self.headers.get('If-None-Match') == etag
+            self.send_response(304 if unchanged else 200)
+            self.send_header('ETag', etag)
+            self.send_header('Cache-Control', 'private, no-cache')
+            self.send_header('Vary', 'Cookie')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Content-Type', 'image/jpeg')
+            self.send_header('Content-Disposition', 'inline; filename=preview.jpg')
+            self.send_header('Content-Security-Policy', "sandbox; default-src 'none'")
+            self.send_header('Referrer-Policy', 'no-referrer')
+            if not unchanged:
+                self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            if not unchanged:
+                self.wfile.write(body)
+        except RequestGone as error:
+            self.reply(404, {'error': str(error)})
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except (PreviewBusy, sqlite3.Error, OSError):
+            self.reply(503, {'error': 'Предпросмотр временно недоступен. Файл можно скачать.'})
 
     def download_file(self, note_id):
         started = False
