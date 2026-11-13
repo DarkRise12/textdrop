@@ -200,3 +200,14 @@ input[type="search"] { min-height: 40px; }
 .page-controls button { min-height: 40px; color: var(--accent-ink); font-size: 13px; }
 
 @media (max-width: 600px) { .count-suffix { display: none; } }
+
+.attach { display: grid; place-items: center; width: 40px; height: 44px; flex-shrink: 0; padding: 8px; }
+.attachment-selection, .upload-feedback { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+#attachment-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.attachment-selection button, .upload-feedback button { min-height: 40px; padding: 8px; font-size: 12px; }
+.upload-feedback { flex-wrap: wrap; }
+#upload-progress { flex: 1; min-width: 80px; accent-color: var(--accent-ink); }
+.file-download { display: flex; flex-direction: column; gap: 5px; color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; min-height: 44px; padding: 4px 0; overflow-wrap: anywhere; }
+.file-download > :first-child { font-weight: 600; }
+.file-detail { color: var(--muted); font-size: 12px; text-decoration: none; }
+.note-file { min-width: min(280px, 94%); }

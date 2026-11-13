@@ -20,6 +20,7 @@ class TextdropEditor {
       <p class="edit-hint">Ctrl / ⌘ + Enter — сохранить · Esc — отменить</p>`;
     this.field = this.element.querySelector('textarea');
     this.field.value = note.text;
+    this.field.required = !note.file;
     this.saveButton = this.element.querySelector('.edit-save');
     this.cancelButton = this.element.querySelector('.edit-cancel');
     this.acceptButton = this.element.querySelector('.edit-accept');
@@ -56,7 +57,7 @@ class TextdropEditor {
     const baseline = this.remote || this.note;
     this.field.disabled = this.saving;
     const retrying = this.attempt && this.field.value === this.attempt.text;
-    this.saveButton.disabled = this.saving || this.deleted || !this.field.value.trim() || (this.field.value === baseline.text && !retrying);
+    this.saveButton.disabled = this.saving || this.deleted || (!this.note.file && !this.field.value.trim()) || (this.field.value === baseline.text && !retrying);
     this.saveButton.textContent = this.saving ? 'Сохраняем…' : this.remote ? 'Сохранить мой вариант' : 'Сохранить';
     this.cancelButton.disabled = this.saving;
     this.acceptButton.disabled = this.saving;

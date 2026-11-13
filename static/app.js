@@ -7,6 +7,7 @@ let noticeKind = '';
 let currentQuery = '', searchTimer = null, feedAbort = null;
 let nextPage = null, feedRevision = null, totalNotes = 0, matchedNotes = 0, loadedThrough = null;
 let olderLoading = false, lastHistoryScroll = 0;
+let selectedFile = null, pendingFileSend = null, uploadRequest = null;
 const expandedMessages = new Set(), messagePreviewCache = new Map();
 const notice = (message, kind = '') => {
   noticeKind = kind;
@@ -59,7 +60,8 @@ $('theme-toggle').onclick = () => {
 new MutationObserver(themeLabel).observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
 themeLabel();
 function resizeInput() {
-  $('send').disabled = $('send').classList.contains('sending') || !$('text').value.trim();
+  $('send').disabled = $('send').classList.contains('sending') || (!$('text').value.trim() && !selectedFile);
+  $('text').required = !selectedFile;
   $('text').style.height = 'auto';
   $('text').style.height = Math.min($('text').scrollHeight, 180) + 'px';
 }
@@ -106,7 +108,7 @@ function apiError(message, status, kind) {
   return Object.assign(new Error(message), {status, kind});
 }
 function isNote(value) {
-  return value && typeof value.id === 'string' && typeof value.text === 'string' && Number.isFinite(value.created) && !Number.isNaN(new Date(value.created).getTime());
+  return value && (!value.file || typeof value.file.name === 'string' && Number.isSafeInteger(value.file.size) && value.file.size >= 0 && /^[a-f0-9]{64}$/.test(value.file.sha256)) && typeof value.id === 'string' && typeof value.text === 'string' && Number.isFinite(value.created) && !Number.isNaN(new Date(value.created).getTime());
 }
 async function api(path, method = 'GET', body, signal) {
   const requestedAt = generation;
@@ -150,6 +152,7 @@ async function api(path, method = 'GET', body, signal) {
       : typeof data.has_more === 'boolean' && Array.isArray(data.removed) && data.removed.every(id => typeof id === 'string')
         && data.items.every(note => typeof note.matches === 'boolean'))
     : /^notes\/[^/]+$/.test(route) && method === 'GET' ? isNote(data)
+    : route === 'storage' ? Number.isSafeInteger(data?.used_bytes) && Number.isSafeInteger(data?.max_file_bytes) && Number.isSafeInteger(data?.max_storage_bytes)
     : path === 'session' ? typeof data?.authenticated === 'boolean'
     : path === 'notes' && method === 'GET' ? Array.isArray(data) && data.every(isNote)
     : path === 'trash' && method === 'GET' ? Array.isArray(data) && data.every(note => isNote(note) && Number.isFinite(note.deleted) && !Number.isNaN(new Date(note.deleted).getTime()) && Number.isFinite(note.expires) && !Number.isNaN(new Date(note.expires).getTime()))
@@ -426,6 +429,16 @@ function render({forceBottom = false, searchChanged = false, preserveScroll = fa
       actions.append(copy, edit, remove); meta.append(time, actions);
     }
     const text = document.createElement('pre'); text.className = 'note-text';
+    if (note.file) {
+      article.classList.add('note-file');
+      const card = document.createElement('a'); card.className = 'file-download';
+      card.href = '/api/files/' + encodeURIComponent(note.id); card.setAttribute('download', note.file.name);
+      const name = document.createElement('span'); name.textContent = note.file.name;
+      const detail = document.createElement('span'); detail.className = 'file-detail';
+      detail.textContent = formatFileSize(note.file.size) + ' · Скачать';
+      card.append(name, detail); article.append(card);
+      if (!note.text) copy.hidden = true;
+    }
     if (editor?.id === note.id) {
       article.classList.add('note-editing');
       actions.hidden = true;
@@ -605,15 +618,17 @@ $('login-form').onsubmit = async event => {
   finally { button.disabled = false; }
 };
 $('compose').onsubmit = async event => {
-  event.preventDefault(); const button = $('compose').querySelector('button');
-  if (button.disabled || !$('text').value.trim()) return;
+  event.preventDefault(); const button = $('send');
+  if (button.disabled || (!$('text').value.trim() && !selectedFile)) return;
   button.disabled = true; button.classList.add('sending'); button.setAttribute('aria-label', 'Отправляем сообщение'); notice('');
   const text = $('text').value;
+  const file = selectedFile;
   if (!pendingSend || pendingSend.text !== text) pendingSend = {text, id: requestId()};
   const sending = pendingSend;
   saveDraft(); // Persist the retry identifier before the request can reach the server.
   try {
-    const saved = await api('notes', 'POST', {text, request_id: sending.id});
+    const saved = file ? await uploadFile(file, text) : await api('notes', 'POST', {text, request_id: sending.id});
+    if (file && selectedFile === file) { selectedFile = null; pendingFileSend = null; updateAttachment(); }
     if (pendingSend === sending) pendingSend = null;
     generation++; // Ignore a poll that began before this message was saved.
     if (view === 'chat') notes = [saved, ...notes.filter(note => note.id !== saved.id)];
@@ -628,18 +643,82 @@ $('compose').onsubmit = async event => {
     await sync();
   } catch (error) {
     if ([409, 410].includes(error.status) && pendingSend === sending) pendingSend = null;
+    if (file && [409, 410].includes(error.status)) pendingFileSend = null;
     saveDraft();
     notice(errorMessage(error));
   }
   finally { button.classList.remove('sending'); button.setAttribute('aria-label', 'Отправить сообщение'); resizeInput(); }
 };
+function formatFileSize(size) {
+  if (size < 1024) return size + ' Б';
+  if (size < 1024 * 1024) return (size / 1024).toLocaleString('ru', {maximumFractionDigits: 1}) + ' КБ';
+  return (size / (1024 * 1024)).toLocaleString('ru', {maximumFractionDigits: 1}) + ' МБ';
+}
+function updateAttachment() {
+  $('attachment-selection').hidden = !selectedFile;
+  $('attachment-name').textContent = selectedFile ? selectedFile.name + ' · ' + formatFileSize(selectedFile.size) : '';
+  $('file-input').value = '';
+  resizeInput();
+}
+$('attach').onclick = () => $('file-input').click();
+$('remove-attachment').onclick = () => { selectedFile = null; pendingFileSend = null; updateAttachment(); };
+$('file-input').onchange = async () => {
+  const file = $('file-input').files[0];
+  if (!file || uploadRequest) return;
+  const current = generation;
+  try {
+    const storage = await api('storage');
+    if (current !== generation || $('workspace').hidden) return;
+    if (file.size > storage.max_file_bytes) throw Error('Файл слишком большой. Лимит: ' + formatFileSize(storage.max_file_bytes) + '.');
+    selectedFile = file; pendingFileSend = null; updateAttachment();
+    notice(file.size + storage.used_bytes > storage.max_storage_bytes
+      ? 'Хранилище заполнено. Освободи место в корзине перед отправкой.' : '');
+  } catch (error) { notice(errorMessage(error)); $('file-input').value = ''; }
+};
+$('cancel-upload').onclick = () => uploadRequest?.abort();
+function uploadFile(file, text) {
+  if (!pendingFileSend || pendingFileSend.file !== file || pendingFileSend.text !== text) pendingFileSend = {file, text, id: requestId()};
+  const metadata = new TextEncoder().encode(JSON.stringify({name: file.name, text, request_id: pendingFileSend.id}));
+  const current = generation;
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest(); uploadRequest = xhr;
+    xhr.open('POST', '/api/files'); xhr.timeout = 600000;
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.setRequestHeader('X-Textdrop-Metadata-Length', String(metadata.length));
+    $('upload-feedback').hidden = false;
+    $('upload-progress').value = 0; $('upload-status').textContent = 'Загружаем файл…';
+    for (const id of ['attach', 'remove-attachment', 'logout']) $(id).disabled = true;
+    function finish() {
+      uploadRequest = null; $('upload-feedback').hidden = true;
+      for (const id of ['attach', 'remove-attachment', 'logout']) $(id).disabled = false;
+    }
+    xhr.upload.onprogress = event => {
+      if (!event.lengthComputable) return;
+      const percent = Math.round(event.loaded / event.total * 100);
+      $('upload-progress').value = percent;
+      $('upload-status').textContent = percent === 100 ? 'Сохраняем файл…' : 'Загрузка: ' + percent + '%';
+    };
+    xhr.onload = () => {
+      finish(); let data;
+      try { data = JSON.parse(xhr.responseText); } catch { data = null; }
+      if (xhr.status === 401 && current === generation) { session(false); notice('Сессия завершилась. Войди снова — файл остаётся выбранным.', 'auth'); }
+      if (xhr.status >= 200 && xhr.status < 300 && isNote(data) && data.file) resolve(data);
+      else reject(apiError(data?.error || 'Не удалось отправить файл. Повтори отправку.', xhr.status, xhr.status === 401 ? 'auth' : 'server'));
+    };
+    xhr.onerror = () => { finish(); reject(Error('Нет связи с сервером. Файл остаётся выбранным — повтори отправку.')); };
+    xhr.ontimeout = () => { finish(); reject(Error('Сервер не ответил вовремя. Файл остаётся выбранным — повтори отправку.')); };
+    xhr.onabort = () => { finish(); reject(Error('Загрузка отменена. Файл остаётся выбранным для повтора.')); };
+    try { xhr.send(new Blob([metadata, file])); }
+    catch { finish(); reject(Error('Не удалось начать загрузку. Повтори отправку.')); }
+  });
+}
 $('text').onkeydown = event => { if (!event.isComposing && event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); $('compose').requestSubmit(); } };
 $('logout').onclick = async () => {
   try {
     await api('logout', 'POST');
     if (editor) editor.closed = true;
     editor = null;
-    pendingSend = null; $('text').value = '';
+    pendingSend = null; selectedFile = null; pendingFileSend = null; updateAttachment(); $('text').value = '';
     let cleared = true;
     try { draftStore?.clear(); } catch { cleared = false; }
     draftStatus(''); session(false);

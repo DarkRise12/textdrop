@@ -9,6 +9,8 @@ services:
       TEXTDROP_PORT: "8765"
       TEXTDROP_DATA: /data
       TEXTDROP_SECURE: "1"
+      TEXTDROP_FILE_LIMIT: ${TEXTDROP_FILE_LIMIT:-26214400}
+      TEXTDROP_STORAGE_LIMIT: ${TEXTDROP_STORAGE_LIMIT:-1073741824}
       TEXTDROP_PASSWORD_FILE: /run/secrets/textdrop_password
       TEXTDROP_SECRET_FILE: /run/secrets/textdrop_secret
     secrets:
