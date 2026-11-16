@@ -53,7 +53,7 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
     assert.equal(await page.locator('.note').count(), 1);
     const file = {name: 'private.txt', mimeType: 'text/plain', buffer: Buffer.from('Alex file')};
     await phone.locator('#file-input').setInputFiles(file); await phone.locator('#attachment-selection').waitFor();
-    await phone.locator('#send').click(); await phone.waitForFunction(() => !selectedFile && !uploadRequest); await idle(phone);
+    await phone.locator('#send').click(); await phone.waitForFunction(() => !selectedFiles.length && !uploadRequest); await idle(phone);
     const fileId = await phone.evaluate(() => notes.find(note => note.file).id);
     assert.equal((await owner.request.get(base + '/api/files/' + fileId)).status(), 404);
     assert.equal(await (await alex.request.get(base + '/api/files/' + fileId)).text(), 'Alex file');

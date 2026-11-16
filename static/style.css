@@ -301,3 +301,17 @@ mark { color: var(--ink); background: var(--selection); border-radius: 2px; }
   .account-footer { padding: 10px 20px; }
   #search-results-label { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
 }
+
+#attachment-list { flex-basis: 100%; order: 2; max-height: min(160px, 24dvh); overflow: auto; scrollbar-color: var(--line) transparent; }
+.selected-file { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.selected-file > span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selected-file button { flex-shrink: 0; min-height: 40px; }
+#attachment-space { order: 3; }
+.attachment-files { min-width: 0; }
+.attachment-files.multiple-files { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.file-item { min-width: 0; }
+.multiple-files .file-item { grid-column: 1 / -1; padding-bottom: 6px; border-bottom: 1px solid var(--bubble-line); }
+.multiple-files .file-item.file-image { grid-column: auto; }
+.multiple-files .image-preview { max-width: none; }
+.multiple-files .file-download { font-size: 13px; }
+.files-heading { font-size: 12px; margin-bottom: 10px; }

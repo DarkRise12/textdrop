@@ -49,3 +49,16 @@ test('accounts keep independent drafts and logout clears only the selected accou
  assert.equal(alex.load().text,'alex draft');
  alex.clear();assert.equal(alex.load(),null);assert.equal(owner.load().text,'owner draft');
 });
+
+test('group retry metadata restores up to ten files without persisting bytes',()=>{
+ const store=storage(), now=()=>1000;
+ const files=Array.from({length:10},(_,index)=>({name:index+'.txt',size:index,lastModified:1000}));
+ const pending={...files[0],files,text:'caption',id:'group-request-12345'};
+ const draft=new Draft(store,now);draft.save('caption',null,pending);
+ const restored=draft.load();assert.equal(restored.filePending.files.length,10);
+ assert.equal(restored.filePending.files[9].name,'9.txt');
+ pending.files.push({name:'eleven',size:1,lastModified:1000});draft.save('',null,pending);
+ assert.equal(draft.load(),null);
+ pending.files=[{name:'bad',size:-1,lastModified:1000}];draft.save('',null,pending);
+ assert.equal(draft.load(),null);
+});

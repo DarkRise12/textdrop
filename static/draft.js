@@ -14,9 +14,10 @@ class TextdropDraft {
     try { draft = JSON.parse(raw); } catch { draft = null; }
     const pending = draft?.pending;
     const file = draft?.filePending;
+    const validFile = value => value && typeof value.name === 'string' && value.name.length <= 1024 && Number.isSafeInteger(value.size) && value.size >= 0 && Number.isFinite(value.lastModified);
     if (!draft || typeof draft.text !== 'string' || draft.text.length > 100000 ||
         !Number.isFinite(draft.updated) || draft.updated > this.now() || this.now() - draft.updated >= this.lifetime ||
-        (file && (typeof file.name !== 'string' || file.name.length > 1024 || !Number.isSafeInteger(file.size) || file.size < 0 || !Number.isFinite(file.lastModified) || typeof file.text !== 'string' || file.text.length > 100000 || typeof file.id !== 'string' || !/^[A-Za-z0-9_-]{16,80}$/.test(file.id))) ||
+        (file && (file.files !== undefined && (!Array.isArray(file.files) || file.files.length < 1 || file.files.length > 10 || !file.files.every(validFile)) || typeof file.name !== 'string' || file.name.length > 1024 || !Number.isSafeInteger(file.size) || file.size < 0 || !Number.isFinite(file.lastModified) || typeof file.text !== 'string' || file.text.length > 100000 || typeof file.id !== 'string' || !/^[A-Za-z0-9_-]{16,80}$/.test(file.id))) ||
         (pending && (typeof pending.text !== 'string' || pending.text.length > 100000 || typeof pending.id !== 'string' || !/^[A-Za-z0-9_-]{16,80}$/.test(pending.id)))) {
       this.clear();
       return null;

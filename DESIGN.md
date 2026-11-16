@@ -69,3 +69,7 @@ Do preserve personal text as literal content and retain existing data/API behavi
 ## Account settings
 
 Keep a fixed heading/close control and quiet logout footer around a scrolling body. Show aggregate storage use and free space with a retry state. Start with the user list and an Add button; reveal creation fields only when requested and clear on cancel. Password controls have explicit associated labels and 44px show/hide buttons; resetting a form masks passwords again. Remember only the last username as a browser preference. On phones, retain the current username with ellipsis for long names.
+
+## Attachment groups
+
+Allow up to ten selected files with a shared caption. Show a compact count, total size, free-space hint, a bounded scrolling list with per-file removal, and a remove-all action. Keep the composer visible at 320px. In the message, group photo previews in two columns and give documents full-width download rows. Keep original filenames literal. Progress/cancel, trash/restore and retry act on the whole message.

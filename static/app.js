@@ -8,7 +8,7 @@ let noticeKind = '';
 let currentQuery = '', searchTimer = null, feedAbort = null;
 let nextPage = null, feedRevision = null, totalNotes = 0, matchedNotes = 0, loadedThrough = null;
 let olderLoading = false, lastHistoryScroll = 0;
-let selectedFile = null, pendingFileSend = null, uploadRequest = null, storageState = null;
+let selectedFiles = [], choosingFiles = false, pendingFileSend = null, uploadRequest = null, storageState = null;
 const expandedSearchMessages = new Set();
 const expandedMessages = new Set(), messagePreviewCache = new Map();
 const notice = (message, kind = '') => {
@@ -29,7 +29,7 @@ function saveDraft() {
   if (!draftReady) return;
   try {
     draftStore.save($('text').value, pendingSend, pendingFileSend);
-    draftStatus(pendingFileSend && !selectedFile ? 'Для повтора выбери файл: ' + pendingFileSend.name : $('text').value ? 'Черновик сохранён на этом устройстве' : '');
+    draftStatus(pendingFileSend && !selectedFiles.length ? 'Для повтора выбери ' + (pendingFileSend.files?.length > 1 ? 'файлы (' + pendingFileSend.files.length + ')' : 'файл: ' + pendingFileSend.name) : $('text').value ? 'Черновик сохранён на этом устройстве' : '');
   } catch {
     draftStatus('Не удалось сохранить черновик на устройстве. Не закрывай вкладку.', true);
   }
@@ -43,7 +43,7 @@ function restoreDraft() {
       $('text').value = draft.text;
       pendingSend = draft.pending || null;
       pendingFileSend = draft.filePending || null;
-      draftStatus(pendingFileSend ? 'Для повтора выбери файл: ' + pendingFileSend.name : draft.text ? 'Черновик восстановлен' : '');
+      draftStatus(pendingFileSend ? 'Для повтора выбери ' + (pendingFileSend.files?.length > 1 ? 'файлы (' + pendingFileSend.files.length + ')' : 'файл: ' + pendingFileSend.name) : draft.text ? 'Черновик восстановлен' : '');
     }
   } catch { draftStatus('Хранилище браузера недоступно. Черновик сохранится только в этой вкладке.', true); }
 }
@@ -63,8 +63,8 @@ $('theme-toggle').onclick = () => {
 new MutationObserver(themeLabel).observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
 themeLabel();
 function resizeInput() {
-  $('send').disabled = $('send').classList.contains('sending') || (!$('text').value.trim() && !selectedFile);
-  $('text').required = !selectedFile;
+  $('send').disabled = choosingFiles || $('send').classList.contains('sending') || (!$('text').value.trim() && !selectedFiles.length);
+  $('text').required = !selectedFiles.length;
   $('text').style.height = 'auto';
   $('text').style.height = Math.min($('text').scrollHeight, 180) + 'px';
 }
@@ -94,12 +94,13 @@ if (window.visualViewport) {
 }
 function session(active, user = currentUser) {
   resetPasswordVisibility();
+  choosingFiles = false; $('attach').disabled = false;
   if (active) {
     if (!isUser(user)) throw Error('Не удалось определить учётную запись. Обнови страницу.');
     if (currentUser?.id !== user.id) {
       saveDraft();
       if (editor) editor.closed = true;
-      editor = null; selectedFile = null; pendingFileSend = null; pendingSend = null;
+      editor = null; selectedFiles = []; pendingFileSend = null; pendingSend = null;
       $('text').value = ''; draftStatus(''); draftReady = false;
       currentQuery = ''; $('search').value = ''; view = 'chat'; storageState = null;
       $('workspace').dataset.view = view;
@@ -143,8 +144,14 @@ function apiError(message, status, kind) {
 function isUser(value) {
   return value && /^(owner|[a-f0-9]{32})$/.test(value.id) && typeof value.username === 'string' && ['admin', 'user'].includes(value.role);
 }
+function filesForNote(note) {
+  return note.files || (note.file ? [{id: note.id, ...note.file}] : []);
+}
+function isFile(value) {
+  return value && typeof value.name === 'string' && Number.isSafeInteger(value.size) && value.size >= 0 && /^[a-f0-9]{64}$/.test(value.sha256);
+}
 function isNote(value) {
-  return value && (!value.file || typeof value.file.name === 'string' && Number.isSafeInteger(value.file.size) && value.file.size >= 0 && /^[a-f0-9]{64}$/.test(value.file.sha256)) && typeof value.id === 'string' && typeof value.text === 'string' && Number.isFinite(value.created) && !Number.isNaN(new Date(value.created).getTime());
+  return value && (!value.file || isFile(value.file)) && (!value.files || Array.isArray(value.files) && value.files.length >= 1 && value.files.length <= 10 && value.files.every(file => isFile(file) && /^[a-f0-9]{32}$/.test(file.id))) && typeof value.id === 'string' && typeof value.text === 'string' && Number.isFinite(value.created) && !Number.isNaN(new Date(value.created).getTime());
 }
 async function api(path, method = 'GET', body, signal) {
   const requestedAt = generation;
@@ -273,6 +280,8 @@ function confirmRemoval(note, permanent, button) {
   const dialog = $('delete-dialog');
   dialog.querySelector('h2').textContent = permanent ? 'Удалить сообщение навсегда?' : 'Переместить сообщение в корзину?';
   dialog.querySelector('p').textContent = permanent ? 'Оно будет удалено окончательно. Восстановить его не получится.' : 'Сообщение исчезнет из чата. Его можно восстановить в течение 30 дней.';
+  const count = filesForNote(note).length;
+  if (count > 1) dialog.querySelector('p').textContent += ' Вместе с ним — все вложения (' + count + ').';
   dialog.querySelector('button[value="delete"]').textContent = permanent ? 'Удалить навсегда' : 'В корзину';
   dialog.returnValue = ''; dialog.showModal();
   dialog.onclose = async () => {
@@ -480,23 +489,34 @@ function render({forceBottom = false, searchChanged = false, preserveScroll = fa
       actions.append(copy, edit, remove); meta.append(time, actions);
     }
     const text = document.createElement('pre'); text.className = 'note-text';
-    if (note.file) {
+    const files = filesForNote(note);
+    if (files.length) {
       article.classList.add('note-file');
-      if (note.file.preview) {
-        const button = document.createElement('button'); button.type = 'button'; button.className = 'image-preview';
-        button.dataset.action = 'preview'; button.setAttribute('aria-label', 'Открыть фотографию ' + note.file.name);
-        const image = document.createElement('img'); image.width = 640; image.height = 480;
-        image.loading = 'lazy'; image.decoding = 'async'; image.alt = 'Фото: ' + note.file.name;
-        image.src = '/api/files/' + encodeURIComponent(note.id) + '/preview';
-        image.onerror = () => { button.remove(); };
-        button.append(image); button.onclick = () => showImage(note, button); article.append(button);
+      const group = document.createElement('div'); group.className = 'attachment-files';
+      if (files.length > 1) {
+        group.classList.add('multiple-files');
+        const heading = document.createElement('p'); heading.className = 'files-heading'; heading.textContent = 'Файлы · ' + files.length; article.append(heading);
       }
-      const card = document.createElement('a'); card.className = 'file-download';
-      card.href = '/api/files/' + encodeURIComponent(note.id); card.setAttribute('download', note.file.name);
-      const name = document.createElement('span'); window.TextdropLinks.highlight(name, note.file.name, query);
-      const detail = document.createElement('span'); detail.className = 'file-detail';
-      detail.textContent = formatFileSize(note.file.size) + ' · Скачать';
-      card.append(name, detail); article.append(card);
+      for (const file of files) {
+        const item = document.createElement('div'); item.className = 'file-item';
+        if (file.preview) {
+          item.classList.add('file-image');
+          const button = document.createElement('button'); button.type = 'button'; button.className = 'image-preview';
+          button.dataset.action = 'preview'; button.setAttribute('aria-label', 'Открыть фотографию ' + file.name);
+          const image = document.createElement('img'); image.width = 640; image.height = 480;
+          image.loading = 'lazy'; image.decoding = 'async'; image.alt = 'Фото: ' + file.name;
+          image.src = '/api/files/' + encodeURIComponent(file.id) + '/preview';
+          image.onerror = () => { button.remove(); };
+          button.append(image); button.onclick = () => showImage(note, file, button); item.append(button);
+        }
+        const card = document.createElement('a'); card.className = 'file-download';
+        card.href = '/api/files/' + encodeURIComponent(file.id); card.setAttribute('download', file.name);
+        const name = document.createElement('span'); window.TextdropLinks.highlight(name, file.name, query);
+        const detail = document.createElement('span'); detail.className = 'file-detail';
+        detail.textContent = formatFileSize(file.size) + ' · Скачать';
+        card.append(name, detail); item.append(card); group.append(item);
+      }
+      article.append(group);
       if (!note.text) copy.hidden = true;
     }
     if (editor?.id === note.id) {
@@ -679,18 +699,18 @@ $('login-form').onsubmit = async event => {
 };
 $('compose').onsubmit = async event => {
   event.preventDefault(); const button = $('send');
-  if (button.disabled || (!$('text').value.trim() && !selectedFile)) return;
+  if (button.disabled || (!$('text').value.trim() && !selectedFiles.length)) return;
   button.disabled = true; button.classList.add('sending'); button.setAttribute('aria-label', 'Отправляем сообщение'); notice('');
   const text = $('text').value;
   const epoch = sessionEpoch;
-  const file = selectedFile;
-  if (!file && (!pendingSend || pendingSend.text !== text)) pendingSend = {text, id: requestId()};
+  const files = selectedFiles.slice();
+  if (!files.length && (!pendingSend || pendingSend.text !== text)) pendingSend = {text, id: requestId()};
   const sending = pendingSend;
   saveDraft(); // Persist the retry identifier before the request can reach the server.
   try {
-    const saved = file ? await uploadFile(file, text) : await api('notes', 'POST', {text, request_id: sending.id});
+    const saved = files.length ? await uploadFiles(files, text) : await api('notes', 'POST', {text, request_id: sending.id});
     if (epoch !== sessionEpoch) return;
-    if (file && selectedFile === file) { selectedFile = null; pendingFileSend = null; updateAttachment(); }
+    if (files.length && files.every((file, index) => selectedFiles[index] === file)) { selectedFiles = []; pendingFileSend = null; updateAttachment(); }
     if (pendingSend === sending) pendingSend = null;
     generation++; // Ignore a poll that began before this message was saved.
     if (view === 'chat') notes = [saved, ...notes.filter(note => note.id !== saved.id)];
@@ -706,22 +726,22 @@ $('compose').onsubmit = async event => {
   } catch (error) {
     if (epoch !== sessionEpoch) return;
     if ([409, 410].includes(error.status) && pendingSend === sending) pendingSend = null;
-    if (file && [409, 410].includes(error.status)) pendingFileSend = null;
+    if (files.length && [409, 410].includes(error.status)) pendingFileSend = null;
     saveDraft();
     notice(errorMessage(error));
   }
   finally { if (epoch === sessionEpoch) { button.classList.remove('sending'); button.setAttribute('aria-label', 'Отправить сообщение'); resizeInput(); } }
 };
 let imageOpener = null;
-function showImage(note, opener) {
+function showImage(note, file, opener) {
   imageOpener = opener;
   const viewer = $('image-viewer'); viewer.dataset.noteId = note.id;
-  $('image-viewer-title').textContent = note.file.name;
-  $('viewer-image').alt = note.file.name;
+  $('image-viewer-title').textContent = file.name;
+  $('viewer-image').alt = file.name;
   $('viewer-image').onerror = () => { closeImageViewer(); notice('Предпросмотр недоступен. Оригинал можно скачать из сообщения.'); };
-  $('viewer-image').src = '/api/files/' + encodeURIComponent(note.id) + '/preview';
-  $('download-original').href = '/api/files/' + encodeURIComponent(note.id);
-  $('download-original').setAttribute('download', note.file.name);
+  $('viewer-image').src = '/api/files/' + encodeURIComponent(file.id) + '/preview';
+  $('download-original').href = '/api/files/' + encodeURIComponent(file.id);
+  $('download-original').setAttribute('download', file.name);
   viewer.showModal(); $('close-image-viewer').focus();
 }
 function closeImageViewer() {
@@ -743,68 +763,94 @@ function formatFileSize(size) {
   return (size / (1024 * 1024)).toLocaleString('ru', {maximumFractionDigits: 1}) + ' МБ';
 }
 function updateAttachment() {
-  $('attachment-selection').hidden = !selectedFile;
-  $('attachment-name').textContent = selectedFile ? selectedFile.name + ' · ' + formatFileSize(selectedFile.size) : '';
+  const count = selectedFiles.length;
+  $('attachment-selection').hidden = !count;
+  $('attachment-name').textContent = count === 1 ? selectedFiles[0].name + ' · ' + formatFileSize(selectedFiles[0].size)
+    : count ? 'Файлы: ' + count + ' / 10 · ' + formatFileSize(selectedFiles.reduce((sum, file) => sum + file.size, 0)) : '';
+  $('remove-attachment').textContent = count > 1 ? 'Убрать все' : 'Убрать';
+  $('remove-attachment').setAttribute('aria-label', count > 1 ? 'Убрать все выбранные файлы' : 'Убрать выбранный файл');
+  $('attachment-list').replaceChildren(); $('attachment-list').hidden = count < 2;
+  for (const [index, file] of selectedFiles.entries()) {
+    const row = document.createElement('div'); row.className = 'selected-file'; row.setAttribute('role', 'listitem');
+    const name = document.createElement('span'); name.textContent = file.name + ' · ' + formatFileSize(file.size); name.title = file.name;
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'quiet'; remove.textContent = 'Убрать';
+    remove.setAttribute('aria-label', 'Убрать ' + file.name); remove.disabled = Boolean(uploadRequest);
+    remove.onclick = () => { selectedFiles.splice(index, 1); pendingFileSend = null; updateAttachment(); saveDraft(); };
+    row.append(name, remove); $('attachment-list').append(row);
+  }
   $('file-input').value = '';
-  $('attachment-space').textContent = selectedFile && storageState ? 'Свободно: ' + formatFileSize(Math.max(0, storageState.max_storage_bytes - storageState.used_bytes)) + ' · файл до ' + formatFileSize(storageState.max_file_bytes) : '';
+  $('attachment-space').textContent = count && storageState ? 'Свободно: ' + formatFileSize(Math.max(0, storageState.max_storage_bytes - storageState.used_bytes)) + ' · до 10 файлов по ' + formatFileSize(storageState.max_file_bytes) : '';
   resizeInput();
 }
 $('attach').onclick = () => $('file-input').click();
-$('remove-attachment').onclick = () => { selectedFile = null; pendingFileSend = null; updateAttachment(); saveDraft(); };
+$('remove-attachment').onclick = () => { selectedFiles = []; pendingFileSend = null; updateAttachment(); saveDraft(); };
 $('file-input').onchange = async () => {
-  const file = $('file-input').files[0];
-  if (!file || uploadRequest) return;
-  const current = generation;
+  const files = Array.from($('file-input').files);
+  if (!files.length || uploadRequest || choosingFiles) return;
+  const epoch = sessionEpoch;
+  choosingFiles = true; $('attach').disabled = true; resizeInput();
   try {
+    if (selectedFiles.length + files.length > 10) throw Error('К сообщению можно прикрепить не больше 10 файлов.');
     const storage = await api('storage');
-    if (current !== generation || $('workspace').hidden) return;
-    if (file.size > storage.max_file_bytes) throw Error('Файл слишком большой. Лимит: ' + formatFileSize(storage.max_file_bytes) + '.');
-    storageState = storage; selectedFile = file;
-    if (pendingFileSend && !samePendingFile(file, pendingFileSend)) pendingFileSend = null;
+    if (epoch !== sessionEpoch || $('workspace').hidden) return;
+    const large = files.find(file => file.size > storage.max_file_bytes);
+    if (large) throw Error('Файл «' + large.name + '» слишком большой. Лимит: ' + formatFileSize(storage.max_file_bytes) + '.');
+    storageState = storage; selectedFiles.push(...files);
+    if (pendingFileSend && !samePendingFiles(selectedFiles, pendingFileSend, true)) pendingFileSend = null;
     updateAttachment(); saveDraft();
-    notice(file.size + storage.used_bytes > storage.max_storage_bytes
-      ? 'Хранилище заполнено. Освободи место в корзине перед отправкой.' : '');
-  } catch (error) { notice(errorMessage(error)); $('file-input').value = ''; }
+    const total = selectedFiles.reduce((sum, file) => sum + file.size, 0);
+    notice(total + storage.used_bytes > storage.max_storage_bytes ? 'Хранилище заполнено. Освободи место в корзине перед отправкой.' : '');
+  } catch (error) { if (epoch === sessionEpoch) { notice(errorMessage(error)); $('file-input').value = ''; } }
+  finally { if (epoch === sessionEpoch) { choosingFiles = false; $('attach').disabled = Boolean(uploadRequest); resizeInput(); } }
 };
 $('cancel-upload').onclick = () => uploadRequest?.abort();
-function samePendingFile(file, pending) {
-  return file.name === pending.name && file.size === pending.size;
+function samePendingFiles(files, pending, partial = false) {
+  const expected = (pending.files || [pending]).map(file => JSON.stringify([file.name, file.size])).sort();
+  const actual = files.map(file => JSON.stringify([file.name, file.size])).sort();
+  if ((!partial && expected.length !== actual.length) || actual.length > expected.length) return false;
+  for (const value of actual) { const index = expected.indexOf(value); if (index < 0) return false; expected.splice(index, 1); }
+  return true;
 }
-function uploadFile(file, text) {
-  if (!pendingFileSend || !samePendingFile(file, pendingFileSend) || pendingFileSend.text !== text) pendingFileSend = {name: file.name, size: file.size, lastModified: file.lastModified, text, id: requestId()};
+function uploadFiles(files, text) {
+  const manifest = files.map(file => ({name: file.name, size: file.size, lastModified: file.lastModified}));
+  if (!pendingFileSend || !samePendingFiles(files, pendingFileSend) || pendingFileSend.text !== text) pendingFileSend = {...manifest[0], files: manifest, text, id: requestId()};
   saveDraft();
-  const metadata = new TextEncoder().encode(JSON.stringify({name: file.name, text, request_id: pendingFileSend.id}));
+  const payload = files.length === 1 ? {name: files[0].name, text, request_id: pendingFileSend.id}
+    : {files: manifest.map(({name, size}) => ({name, size})), text, request_id: pendingFileSend.id};
+  const metadata = new TextEncoder().encode(JSON.stringify(payload));
   const current = generation;
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest(); uploadRequest = xhr;
-    xhr.open('POST', '/api/files'); xhr.timeout = 600000;
+    xhr.open('POST', '/api/files'); xhr.timeout = files.length * 600000;
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.setRequestHeader('X-Textdrop-User', currentUser.id);
     xhr.setRequestHeader('X-Textdrop-Metadata-Length', String(metadata.length));
     $('upload-feedback').hidden = false;
-    $('upload-progress').value = 0; $('upload-status').textContent = 'Загружаем файл…';
+    $('upload-progress').value = 0; $('upload-status').textContent = 'Загружаем файлы…';
     for (const id of ['attach', 'remove-attachment', 'logout', 'account-button']) $(id).disabled = true;
+    for (const button of $('attachment-list').querySelectorAll('button')) button.disabled = true;
     function finish() {
       uploadRequest = null; $('upload-feedback').hidden = true;
       for (const id of ['attach', 'remove-attachment', 'logout', 'account-button']) $(id).disabled = false;
+      for (const button of $('attachment-list').querySelectorAll('button')) button.disabled = false;
     }
     xhr.upload.onprogress = event => {
       if (!event.lengthComputable) return;
       const percent = Math.round(event.loaded / event.total * 100);
       $('upload-progress').value = percent;
-      $('upload-status').textContent = percent === 100 ? 'Сохраняем файл…' : 'Загрузка: ' + percent + '%';
+      $('upload-status').textContent = percent === 100 ? 'Сохраняем файлы…' : 'Загрузка: ' + percent + '%';
     };
     xhr.onload = () => {
       finish(); let data;
       try { data = JSON.parse(xhr.responseText); } catch { data = null; }
-      if ((xhr.status === 401 || data?.account_changed) && current === generation) { session(false); notice('Сессия завершилась. Войди снова — файл остаётся выбранным.', 'auth'); }
-      if (xhr.status >= 200 && xhr.status < 300 && isNote(data) && data.file) resolve(data);
-      else reject(apiError(data?.error || 'Не удалось отправить файл. Повтори отправку.', xhr.status, xhr.status === 401 ? 'auth' : 'server'));
+      if ((xhr.status === 401 || data?.account_changed) && current === generation) { session(false); notice('Сессия завершилась. Войди снова — файлы остаются выбранными.', 'auth'); }
+      if (xhr.status >= 200 && xhr.status < 300 && isNote(data) && filesForNote(data).length) resolve(data);
+      else reject(apiError(data?.error || 'Не удалось отправить файлы. Повтори отправку.', xhr.status, xhr.status === 401 ? 'auth' : 'server'));
     };
-    xhr.onerror = () => { finish(); reject(Error('Нет связи с сервером. Файл остаётся выбранным — повтори отправку.')); };
-    xhr.ontimeout = () => { finish(); reject(Error('Сервер не ответил вовремя. Файл остаётся выбранным — повтори отправку.')); };
-    xhr.onabort = () => { finish(); reject(Error('Загрузка отменена. Файл остаётся выбранным для повтора.')); };
-    try { xhr.send(new Blob([metadata, file])); }
+    xhr.onerror = () => { finish(); reject(Error('Нет связи с сервером. Файлы остаются выбранными — повтори отправку.')); };
+    xhr.ontimeout = () => { finish(); reject(Error('Сервер не ответил вовремя. Файлы остаются выбранными — повтори отправку.')); };
+    xhr.onabort = () => { finish(); reject(Error('Загрузка отменена. Файлы остаются выбранными для повтора.')); };
+    try { xhr.send(new Blob([metadata, ...files])); }
     catch { finish(); reject(Error('Не удалось начать загрузку. Повтори отправку.')); }
   });
 }
@@ -814,7 +860,7 @@ $('logout').onclick = async () => {
     await api('logout', 'POST');
     if (editor) editor.closed = true;
     editor = null;
-    pendingSend = null; selectedFile = null; pendingFileSend = null; updateAttachment(); $('text').value = '';
+    pendingSend = null; selectedFiles = []; pendingFileSend = null; updateAttachment(); $('text').value = '';
     let cleared = true;
     try { draftStore?.clear(); } catch { cleared = false; }
     draftStatus(''); session(false); draftReady = false; currentUser = null; draftStore = null;

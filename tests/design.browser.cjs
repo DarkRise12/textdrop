@@ -90,7 +90,7 @@ const fs = require('node:fs'), path = require('node:path'), os = require('node:o
     await page.locator('#attachment-selection').waitFor();
     assert((await page.locator('#attachment-space').textContent()).includes('Свободно: 3 ГБ'));
     await shot('320-file-selected');
-    await page.locator('#send').click(); await page.waitForFunction(() => !uploadRequest && !selectedFile); await idle();
+    await page.locator('#send').click(); await page.waitForFunction(() => !uploadRequest && !selectedFiles.length); await idle();
     await search('ПРОЕКТ'); assert.equal(await page.locator('.file-download mark').textContent(), 'проект');
     await page.locator('#search').press('Escape'); await idle();
     // Storage errors remain local to settings and can recover without discarding a draft.

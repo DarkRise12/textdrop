@@ -15,7 +15,7 @@ import tempfile
 import threading
 import unicodedata
 import time
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager, nullcontext, ExitStack
 from functools import wraps
 from accounts import Accounts, password_matches
 from http import cookies
@@ -28,6 +28,7 @@ PAGE_SIZE = 50
 PAGE_MAX = 100
 PAGE_BYTES = 900_000
 SEARCH_LIMIT = 256
+FILE_COUNT_LIMIT = 10
 FILE_LIMIT = 125 * 1024 * 1024
 STORAGE_LIMIT = 3 * 1024 * 1024 * 1024
 LIMIT = 100_000
@@ -35,7 +36,13 @@ PREVIEW_VERSION = 1
 PREVIEW_INPUT_LIMIT = 32 * 1024 * 1024
 PREVIEW_BYTE_LIMIT = 100 * 1024
 TRASH_LIFETIME = 30 * 24 * 60 * 60 * 1000
-ATTACHMENT_SELECT = ', a.name AS attachment_name, a.size AS attachment_size, a.sha256 AS attachment_sha256, i.eligible AS attachment_preview '
+ATTACHMENT_SELECT = (', a.name AS attachment_name, a.size AS attachment_size, a.sha256 AS attachment_sha256, i.eligible AS attachment_preview, '
+    "(SELECT json_group_array(json_object('id', f.file_id, 'name', f.name, 'size', f.size, 'sha256', f.sha256, 'preview', f.eligible)) "
+    'FROM (SELECT g.file_id, a2.name, a2.size, a2.sha256, i2.eligible FROM attachment_groups g '
+    'JOIN attachments a2 ON a2.note_id=g.file_id LEFT JOIN attachment_images i2 ON i2.note_id=g.file_id '
+    'WHERE g.note_id=n.id ORDER BY g.position) f) AS attachment_list ')
+FILE_SEARCH = ('EXISTS (SELECT 1 FROM attachment_groups g JOIN attachments f ON f.note_id=g.file_id '
+               'WHERE g.note_id=n.id AND instr(casefold(f.name), ?) > 0)')
 NOTE_SELECT = ('SELECT n.id, n.text, n.created, COALESCE(v.version, 0) AS version, v.updated'
                + ATTACHMENT_SELECT + 'FROM notes n LEFT JOIN note_versions v ON v.note_id = n.id '
                'LEFT JOIN attachments a ON a.note_id = n.id LEFT JOIN attachment_images i ON i.note_id = n.id')
@@ -48,6 +55,9 @@ def note_record(row):
     size = note.pop('attachment_size', None)
     digest = note.pop('attachment_sha256', None)
     preview = note.pop('attachment_preview', None)
+    files = json.loads(note.pop('attachment_list', '[]') or '[]')
+    if len(files) > 1:
+        note['files'] = [dict(id=file['id'], name=file['name'], size=file['size'], sha256=file['sha256'], **({'preview': True} if file['preview'] else {})) for file in files]
     if name is not None:
         note['file'] = {'name': name, 'size': size, 'sha256': digest}
         if preview:
@@ -118,8 +128,15 @@ class Store:
             db.execute('''CREATE TABLE IF NOT EXISTS attachment_images (
                 note_id TEXT PRIMARY KEY, eligible INTEGER NOT NULL, version INTEGER NOT NULL DEFAULT 0,
                 width INTEGER, height INTEGER, body BLOB)''')
+            db.execute('''CREATE TABLE IF NOT EXISTS attachment_groups (
+                file_id TEXT PRIMARY KEY, note_id TEXT NOT NULL, position INTEGER NOT NULL,
+                UNIQUE(note_id, position))''')
+            db.execute('INSERT OR IGNORE INTO attachment_groups SELECT note_id, note_id, 0 FROM attachments WHERE note_id NOT IN (SELECT file_id FROM attachment_groups)')
+            # Retain the legacy BLOB tables and the first file's URL for old clients.
+            db.execute('DROP TRIGGER IF EXISTS preview_cleanup')
             db.execute('''CREATE TRIGGER IF NOT EXISTS preview_cleanup AFTER DELETE ON attachments BEGIN
                 DELETE FROM attachment_images WHERE note_id=OLD.note_id;
+                DELETE FROM attachment_groups WHERE file_id=OLD.note_id;
                 END''')
             # Backfill only tiny headers of files saved by earlier images; never SELECT the BLOB.
             for record in db.execute('''SELECT a.rowid, a.note_id, a.size FROM attachments a
@@ -128,9 +145,10 @@ class Store:
                     eligible = preview_candidate(blob.read(16), record['size'])
                 db.execute('INSERT INTO attachment_images(note_id, eligible) VALUES (?, ?)', (record['note_id'], int(eligible)))
             for table in ('notes', 'trash'):
+                db.execute(f'DROP TRIGGER IF EXISTS attachments_cleanup_{table}')
                 db.execute(f'''CREATE TRIGGER IF NOT EXISTS attachments_cleanup_{table}
                     AFTER DELETE ON {table} BEGIN
-                    DELETE FROM attachments WHERE note_id = OLD.id
+                    DELETE FROM attachments WHERE (note_id = OLD.id OR note_id IN (SELECT file_id FROM attachment_groups WHERE note_id=OLD.id))
                     AND NOT EXISTS (SELECT 1 FROM notes WHERE id = OLD.id)
                     AND NOT EXISTS (SELECT 1 FROM trash WHERE id = OLD.id);
                     END''')
@@ -199,7 +217,7 @@ class Store:
     @staticmethod
     def feed_counts(db, table, query):
         total = db.execute('SELECT count(*) FROM ' + table).fetchone()[0]
-        matched = db.execute('SELECT count(*) FROM ' + table + ' WHERE instr(casefold(n.text), ?) > 0 OR EXISTS (SELECT 1 FROM attachments a WHERE a.note_id=n.id AND instr(casefold(a.name), ?) > 0)', (query, query)).fetchone()[0] if query else total
+        matched = db.execute('SELECT count(*) FROM ' + table + ' WHERE instr(casefold(n.text), ?) > 0 OR ' + FILE_SEARCH, (query, query)).fetchone()[0] if query else total
         return {'total': total, 'matched': matched}
 
     def page(self, query='', before=None, limit=PAGE_SIZE, trash=False):
@@ -210,7 +228,7 @@ class Store:
         select, table, key = self.feed_source(trash)
         conditions, args = [], []
         if query:
-            conditions.append("(instr(casefold(n.text), ?) > 0 OR instr(casefold(COALESCE(a.name, '')), ?) > 0)"); args.extend((query, query))
+            conditions.append("(instr(casefold(n.text), ?) > 0 OR " + FILE_SEARCH + ")"); args.extend((query, query))
         if cursor:
             conditions.append(f'({key}, n.id) < (?, ?)'); args.extend(cursor)
         where = ' WHERE ' + ' AND '.join(conditions) if conditions else ''
@@ -247,7 +265,7 @@ class Store:
                 record = db.execute(select + ' WHERE n.id = ?', (row['note_id'],)).fetchone()
                 note = note_record(record) if record is not None else None
                 if note is not None:
-                    note['matches'] = not query or query in note['text'].casefold() or query in note.get('file', {}).get('name', '').casefold()
+                    note['matches'] = not query or query in note['text'].casefold() or any(query in file['name'].casefold() for file in note.get('files', [note['file']] if 'file' in note else []))
                 cost = len(json.dumps(note or row['note_id'], ensure_ascii=False).encode()) + 2
                 if len(items) + len(removed) == limit or ((items or removed) and size + cost > PAGE_BYTES):
                     more = True
@@ -303,59 +321,75 @@ class Store:
             used = self.quota_bytes(db)
         return dict(used_bytes=used, max_file_bytes=self.file_limit, max_storage_bytes=self.storage_limit)
 
-    @storage_serialized
     def add_file(self, stream, size, name, text, request_id, digest):
-        if type(size) is not int or not 0 <= size <= self.file_limit:
-            raise UploadLimit('Файл превышает допустимый размер.')
-        if not isinstance(name, str) or not isinstance(text, str) or len(text) > LIMIT:
-            raise ValueError('Некорректное имя файла или подпись.')
-        name = ''.join(c for c in name.replace('\\', '/').split('/')[-1] if not unicodedata.category(c).startswith('C')).strip()[:180]
-        if not name or name in ('.', '..'):
-            raise ValueError('У файла должно быть имя.')
+        return self.add_files([(stream, size, name, digest)], text, request_id)
+
+    @storage_serialized
+    def add_files(self, files, text, request_id):
+        if not isinstance(files, (list, tuple)) or not 1 <= len(files) <= FILE_COUNT_LIMIT:
+            raise ValueError('К сообщению можно приложить от 1 до 10 файлов.')
+        if not isinstance(text, str) or len(text) > LIMIT:
+            raise ValueError('Некорректная подпись.')
         if not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{16,80}', request_id):
             raise ValueError('Некорректный идентификатор отправки.')
-        fingerprint = hashlib.sha256(json.dumps([name, text, size, digest], ensure_ascii=False).encode()).hexdigest()
+        normalized = []
+        for stream, size, name, digest in files:
+            if type(size) is not int or not 0 <= size <= self.file_limit:
+                raise UploadLimit('Файл превышает допустимый размер.')
+            if not isinstance(name, str):
+                raise ValueError('Некорректное имя файла.')
+            name = ''.join(c for c in name.replace('\\', '/').split('/')[-1] if not unicodedata.category(c).startswith('C')).strip()[:180]
+            if not name or name in ('.', '..'):
+                raise ValueError('У файла должно быть имя.')
+            normalized.append((stream, size, name, digest))
+        if len(normalized) == 1:
+            _, size, name, digest = normalized[0]
+            fingerprint_data = [name, text, size, digest]  # Legacy retry IDs remain valid.
+        else:
+            # Reselecting the same files in another picker order must not duplicate a message.
+            fingerprint_data = [sorted((name, size, digest) for _, size, name, digest in normalized), text]
+        fingerprint = hashlib.sha256(json.dumps(fingerprint_data, ensure_ascii=False).encode()).hexdigest()
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             previous = db.execute('SELECT * FROM file_requests WHERE request_id = ?', (request_id,)).fetchone()
             if previous:
                 if previous['fingerprint'] != fingerprint:
-                    raise RequestConflict('Идентификатор отправки уже использован для другого файла.')
+                    raise RequestConflict('Идентификатор отправки уже использован для других файлов.')
                 row = db.execute(NOTE_SELECT + ' WHERE n.id = ?', (previous['note_id'],)).fetchone()
                 if row is None:
-                    raise RequestGone('Файл уже отправлен и удалён. Повтор не восстановит его.')
+                    raise RequestGone('Сообщение уже отправлено и удалено. Повтор не восстановит его.')
                 return note_record(row)
-            used = self.quota_bytes(db)
-            if used + size > self.storage_limit:
+            if self.quota_bytes(db) + sum(size for _, size, _, _ in normalized) > self.storage_limit:
                 raise UploadLimit('Хранилище файлов заполнено. Освободи место, удалив файлы из корзины.')
-            header = stream.read(16); stream.seek(0)
-            eligible = preview_candidate(header, size)
             note_id = secrets.token_hex(16)
-            db.execute('INSERT INTO attachments VALUES (?, ?, ?, ?, zeroblob(?))', (note_id, name, size, digest, size))
-            rowid = db.execute('SELECT rowid FROM attachments WHERE note_id = ?', (note_id,)).fetchone()[0]
-            with db.blobopen('attachments', 'body', rowid, readonly=False) as blob:
-                remaining = size
-                checksum = hashlib.sha256()
-                while remaining:
-                    chunk = stream.read(min(65536, remaining))
-                    if not chunk:
-                        raise ValueError('Загрузка файла прервана. Повтори отправку.')
-                    blob.write(chunk); checksum.update(chunk); remaining -= len(chunk)
-                if stream.read(1) or checksum.hexdigest() != digest:
-                    raise ValueError('Содержимое файла не совпало. Повтори отправку.')
-            db.execute('INSERT INTO attachment_images(note_id, eligible) VALUES (?, ?)', (note_id, int(eligible)))
+            for position, (stream, size, name, digest) in enumerate(normalized):
+                file_id = note_id if position == 0 else secrets.token_hex(16)
+                header = stream.read(16); stream.seek(0)
+                db.execute('INSERT INTO attachments VALUES (?, ?, ?, ?, zeroblob(?))', (file_id, name, size, digest, size))
+                rowid = db.execute('SELECT rowid FROM attachments WHERE note_id=?', (file_id,)).fetchone()[0]
+                with db.blobopen('attachments', 'body', rowid, readonly=False) as blob:
+                    remaining = size; checksum = hashlib.sha256()
+                    while remaining:
+                        chunk = stream.read(min(65536, remaining))
+                        if not chunk:
+                            raise ValueError('Загрузка файла прервана. Повтори отправку.')
+                        blob.write(chunk); checksum.update(chunk); remaining -= len(chunk)
+                    if stream.read(1) or checksum.hexdigest() != digest:
+                        raise ValueError('Содержимое файла не совпало. Повтори отправку.')
+                db.execute('INSERT INTO attachment_images(note_id, eligible) VALUES (?, ?)', (file_id, int(preview_candidate(header, size))))
+                db.execute('INSERT INTO attachment_groups VALUES (?, ?, ?)', (file_id, note_id, position))
             db.execute('INSERT INTO notes VALUES (?, ?, ?)', (note_id, text, int(time.time() * 1000)))
             db.execute('INSERT INTO file_requests VALUES (?, ?, ?)', (request_id, note_id, fingerprint))
-            return note_record(db.execute(NOTE_SELECT + ' WHERE n.id = ?', (note_id,)).fetchone())
+            return note_record(db.execute(NOTE_SELECT + ' WHERE n.id=?', (note_id,)).fetchone())
 
     @contextmanager
     def download(self, note_id):
         db = self.connect()
         try:
             db.execute('BEGIN')
-            row = db.execute("""SELECT a.rowid, a.name, a.size FROM attachments a WHERE a.note_id = ?
-                AND (EXISTS (SELECT 1 FROM notes WHERE id = a.note_id)
-                OR EXISTS (SELECT 1 FROM trash WHERE id = a.note_id AND expires > ?))""",
+            row = db.execute("""SELECT a.rowid, a.name, a.size FROM attachments a LEFT JOIN attachment_groups g ON g.file_id=a.note_id WHERE a.note_id = ?
+                AND (EXISTS (SELECT 1 FROM notes WHERE id = COALESCE(g.note_id, a.note_id))
+                OR EXISTS (SELECT 1 FROM trash WHERE id = COALESCE(g.note_id, a.note_id) AND expires > ?))""",
                 (note_id, int(time.time() * 1000))).fetchone()
             if row is None:
                 raise RequestGone('Файл удалён или срок хранения истёк.')
@@ -366,9 +400,9 @@ class Store:
 
     @staticmethod
     def preview_row(db, note_id):
-        row = db.execute("""SELECT i.* FROM attachment_images i JOIN attachments a ON a.note_id=i.note_id
-            WHERE i.note_id=? AND (EXISTS (SELECT 1 FROM notes WHERE id=i.note_id)
-            OR EXISTS (SELECT 1 FROM trash WHERE id=i.note_id AND expires>?))""",
+        row = db.execute("""SELECT i.* FROM attachment_images i JOIN attachments a ON a.note_id=i.note_id LEFT JOIN attachment_groups g ON g.file_id=i.note_id
+            WHERE i.note_id=? AND (EXISTS (SELECT 1 FROM notes WHERE id=COALESCE(g.note_id,i.note_id))
+            OR EXISTS (SELECT 1 FROM trash WHERE id=COALESCE(g.note_id,i.note_id) AND expires>?))""",
             (note_id, int(time.time() * 1000))).fetchone()
         if row is None:
             raise RequestGone('Изображение удалено или срок хранения истёк.')
@@ -740,28 +774,41 @@ class Handler(BaseHTTPRequestHandler):
         try:
             size = int(self.headers.get('Content-Length', '-1'))
             prefix = int(self.headers.get('X-Textdrop-Metadata-Length', '0'))
-            if self.headers.get('Transfer-Encoding') or not 1 <= prefix <= LIMIT * 6 + 1024 or size < prefix:
+            if self.headers.get('Transfer-Encoding') or not 1 <= prefix <= LIMIT * 6 + 16_384 or size < prefix:
                 raise ValueError('Некорректный формат загрузки.')
-            file_size = size - prefix
-            if file_size > self.store.file_limit:
-                raise UploadLimit('Файл превышает допустимый размер.')
             if hasattr(self.connection, 'settimeout'):
                 self.connection.settimeout(120)
             meta = json.loads(self.rfile.read(prefix))
             if not isinstance(meta, dict):
                 raise ValueError('Некорректные данные файла.')
-            # Receive outside the write transaction, using the writable data volume.
-            with tempfile.TemporaryFile(dir=Path(self.store.path).parent) as stream:
-                remaining = file_size; digest = hashlib.sha256()
-                while remaining:
-                    chunk = self.rfile.read(min(65536, remaining))
-                    if not chunk:
-                        raise ValueError('Загрузка прервана. Повтори отправку.')
-                    stream.write(chunk); digest.update(chunk); remaining -= len(chunk)
-                stream.seek(0)
+            manifest = meta.get('files') if 'files' in meta else [{'name': meta.get('name'), 'size': size - prefix}]
+            if not isinstance(manifest, list) or not 1 <= len(manifest) <= FILE_COUNT_LIMIT:
+                raise ValueError('Можно отправить от 1 до 10 файлов.')
+            for file in manifest:
+                if not isinstance(file, dict) or type(file.get('size')) is not int or not isinstance(file.get('name'), str):
+                    raise ValueError('Некорректный список файлов.')
+                if file['size'] < 0:
+                    raise ValueError('Некорректный размер файла.')
+                if file['size'] > self.store.file_limit:
+                    raise UploadLimit('Файл превышает допустимый размер.')
+            if sum(file['size'] for file in manifest) != size - prefix:
+                raise ValueError('Размер файлов не совпал.')
+            # Stream to bounded temporary disk space, never buffer file bodies in RAM.
+            with ExitStack() as staging:
+                files = []
+                for file in manifest:
+                    stream = staging.enter_context(tempfile.TemporaryFile(dir=Path(self.store.path).parent))
+                    remaining = file['size']; digest = hashlib.sha256()
+                    while remaining:
+                        chunk = self.rfile.read(min(65536, remaining))
+                        if not chunk:
+                            raise ValueError('Загрузка прервана. Повтори отправку.')
+                        stream.write(chunk); digest.update(chunk); remaining -= len(chunk)
+                    stream.seek(0)
+                    files.append((stream, file['size'], file['name'], digest.hexdigest()))
                 if not self.authorize():
                     return
-                note = self.store.add_file(stream, file_size, meta.get('name'), meta.get('text', ''), meta.get('request_id'), digest.hexdigest())
+                note = self.store.add_files(files, meta.get('text', ''), meta.get('request_id'))
             self.reply(201, note)
         except UploadLimit as error:
             self.reply(413, {'error': str(error)})

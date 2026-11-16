@@ -12,7 +12,7 @@ The owner and invited users each move their own text and files between devices. 
 Provide the same persistent text content on every device.
 
 ## Capabilities and Constraints
-Text messages and one-file messages with optional captions. Deploy on this server. Commit each functional addition.
+Text messages and messages with up to 10 files and an optional shared caption. Deploy on this server. Commit each functional addition.
 
 ## Open Implementation Assumptions
 Owner-managed accounts, PBKDF2 password hashes and revocable sessions, Python HTTP server, SQLite and an isolated Pillow thumbnail worker, responsive browser interface, polling synchronization. These choices implement the requested first version; they are not confirmed long-term product requirements. The owner confirmed successful cross-device use at https://share.nikitalebe.dev, behind the existing Docker Caddy container caddy-caddy-1 on caddy_default.
