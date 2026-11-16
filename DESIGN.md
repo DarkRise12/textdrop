@@ -77,3 +77,9 @@ Allow up to ten selected files with a shared caption. Show a compact count, tota
 ## Brand assets
 
 Use `static/logo.svg` for the header and SVG favicon. Fixed #733bb8 and white work in both themes. The header mark is 32px on desktop and 26px on phones; preserve the wordmark and visible account name at 320px. The ICO fallback contains 16/32/48px variants; the opaque 180px PNG supports touch bookmarks. No font, image library or external request is required.
+
+## Installed app and offline states
+
+Keep installation quiet: one action below login and another in account settings; hide both in standalone mode. Use the existing drop/arrow mark for 192/512px icons and an opaque maskable variant. Respect safe-area insets. Manual installation instructions use the existing native dialog.
+
+A fresh offline launch shows a connection screen with retry, without private history or drafts before server authentication. Preserve text and show a concise connection notice when an open chat loses its connection. Updates appear in a compact bar above the workspace and require an explicit action. Save the draft before reloading; explain why editing, selected files or an upload must finish first. Never force another open tab to reload.

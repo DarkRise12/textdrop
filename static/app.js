@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 let notes = [], loading = false, generation = 0, online = false;
 let editor = null;
-let sessionEpoch = 0, currentUser = null;
+let sessionEpoch = 0, currentUser = null, startupAttempt = 0, startupLoading = false;
 let view = 'chat', syncAgain = false, viewLoaded = false;
 let noticeKind = '';
 let currentQuery = '', searchTimer = null, feedAbort = null;
@@ -14,9 +14,9 @@ const expandedMessages = new Set(), messagePreviewCache = new Map();
 const notice = (message, kind = '') => {
   noticeKind = kind;
   $('notice').classList.toggle('success', kind === 'success');
-  $('notice').textContent = message;
+  if ($('notice').textContent !== message) $('notice').textContent = message;
   $('notice').hidden = !message;
-  $('login-feedback').textContent = message;
+  if ($('login-feedback').textContent !== message) $('login-feedback').textContent = message;
   $('login-feedback').hidden = !message || $('login').hidden;
 };
 let draftStore, draftReady = false, pendingSend = null;
@@ -26,12 +26,14 @@ function draftStatus(text, error = false) {
   $('draft-status').classList.toggle('error', error);
 }
 function saveDraft() {
-  if (!draftReady) return;
+  if (!draftReady) return true;
   try {
     draftStore.save($('text').value, pendingSend, pendingFileSend);
     draftStatus(pendingFileSend && !selectedFiles.length ? 'Для повтора выбери ' + (pendingFileSend.files?.length > 1 ? 'файлы (' + pendingFileSend.files.length + ')' : 'файл: ' + pendingFileSend.name) : $('text').value ? 'Черновик сохранён на этом устройстве' : '');
+    return true;
   } catch {
     draftStatus('Не удалось сохранить черновик на устройстве. Не закрывай вкладку.', true);
+    return false;
   }
 }
 function restoreDraft() {
@@ -93,6 +95,7 @@ if (window.visualViewport) {
   fitViewport();
 }
 function session(active, user = currentUser) {
+  $('offline-start').hidden = true;
   resetPasswordVisibility();
   choosingFiles = false; $('attach').disabled = false;
   if (active) {
@@ -597,7 +600,7 @@ function feedError(error) {
     : error.kind === 'protocol' ? 'Ошибка ответа сервера'
     : error.kind === 'timeout' ? 'Сервер не отвечает' : 'Нет соединения', 'error');
   $('retry').hidden = $('workspace').hidden;
-  notice(errorMessage(error), 'sync');
+  notice(navigator.onLine === false ? 'Нет сети. Черновик сохраняется на этом устройстве; отправь его после подключения.' : errorMessage(error), navigator.onLine === false ? 'offline' : 'sync');
 }
 async function sync() {
   if ($('workspace').hidden || searchTimer) return;
@@ -655,7 +658,7 @@ async function sync() {
         if (!data.has_more) break;
       }
     }
-    if (noticeKind === 'sync' || noticeKind === 'start') notice('');
+    if (noticeKind === 'sync' || noticeKind === 'start' || noticeKind === 'offline') notice('');
     online = true;
     setConnection('Синхронизировано', 'ready'); $('retry').hidden = true;
   } catch (error) {
@@ -879,22 +882,46 @@ async function retryConnection(event) {
 $('retry').onclick = retryConnection;
 $('login-retry').onclick = retryConnection;
 async function start() {
-  const current = generation;
+  const current = generation, attempt = ++startupAttempt;
+  startupLoading = true;
   try {
     const data = await api('session');
-    if (current !== generation) return;
+    if (current !== generation || attempt !== startupAttempt) return;
     if (noticeKind === 'start') notice('');
     session(data.authenticated, data.user); $('retry').hidden = true;
     if (data.authenticated) await sync();
   } catch (error) {
-    if (current !== generation) return;
+    if (current !== generation || attempt !== startupAttempt) return;
     session(false); notice(errorMessage(error), 'start');
     $('login-retry').hidden = false;
-  }
+    if (error.kind === 'network' || navigator.onLine === false) {
+      $('offline-start').hidden = false; $('login').hidden = true; $('login-retry').hidden = true; $('login-feedback').hidden = true;
+      const message = 'Попробуем подключиться снова, когда появится сеть.';
+      if ($('offline-feedback').textContent !== message) $('offline-feedback').textContent = message;
+    }
+  } finally { if (attempt === startupAttempt) startupLoading = false; }
 }
+$('offline-retry').onclick = async () => {
+  $('offline-retry').disabled = true;
+  try { await start(); } finally { $('offline-retry').disabled = false; }
+};
+window.addEventListener('offline', () => {
+  saveDraft();
+  if (!$('workspace').hidden) { setConnection('Нет соединения', 'error'); notice('Нет сети. Черновик сохраняется на этом устройстве; отправь его после подключения.', 'offline'); }
+});
+window.addEventListener('textdrop:before-update', event => {
+  if (editor || uploadRequest || choosingFiles || selectedFiles.length || $('send').classList.contains('sending')) {
+    event.preventDefault(); event.detail.message = 'Заверши редактирование или отправку файлов, затем обнови.'; return;
+  }
+  if (!saveDraft() && ($('text').value || pendingSend || pendingFileSend)) {event.preventDefault(); event.detail.message = 'Не удалось сохранить черновик. Скопируй текст перед обновлением.';}
+});
 document.addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });
 window.addEventListener('online', () => { if ($('workspace').hidden) start(); else sync(); });
-setInterval(() => { if (!document.hidden) sync(); }, 3000);
+setInterval(() => {
+  if (document.hidden) return;
+  if (!$('offline-start').hidden && navigator.onLine && !startupLoading) start();
+  else sync();
+}, 3000);
 start();
 
 function accountFeedback(message, success = false) {

@@ -24,6 +24,30 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit, quote
 
 ROOT = Path(__file__).resolve().parent
+STATIC_FILES = {'/logo.svg': ('logo.svg', 'image/svg+xml'), '/favicon.svg': ('logo.svg', 'image/svg+xml'), '/favicon.ico': ('favicon.ico', 'image/vnd.microsoft.icon'), '/apple-touch-icon.png': ('apple-touch-icon.png', 'image/png'), '/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/theme.js': ('theme.js', 'text/javascript'), '/draft.js': ('draft.js', 'text/javascript'), '/editor.js': ('editor.js', 'text/javascript'), '/links.js': ('links.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
+STATIC_FILES.update({
+    '/manifest.webmanifest': ('manifest.webmanifest', 'application/manifest+json'),
+    '/pwa.js': ('pwa.js', 'text/javascript'),
+    '/icon-192.png': ('icon-192.png', 'image/png'),
+    '/icon-512.png': ('icon-512.png', 'image/png'),
+    '/icon-maskable-512.png': ('icon-maskable-512.png', 'image/png'),
+})
+
+
+def service_worker():
+    # The cache version follows all public assets automatically. Integrity rejects
+    # a mixed snapshot if a deployment happens while a worker is installing.
+    template = (ROOT / 'static' / 'sw.js').read_text()
+    version = hashlib.sha256(template.encode())
+    assets = []
+    for url, (name, _) in sorted(STATIC_FILES.items()):
+        body = (ROOT / 'static' / name).read_bytes()
+        version.update(url.encode() + b'\x00' + body)
+        digest = base64.b64encode(hashlib.sha256(body).digest()).decode()
+        assets.append({'url': url, 'integrity': 'sha256-' + digest})
+    return template.replace('__TEXTDROP_VERSION__', version.hexdigest()[:24]).replace('__TEXTDROP_ASSETS__', json.dumps(assets)).encode()
+
+
 PAGE_SIZE = 50
 PAGE_MAX = 100
 PAGE_BYTES = 900_000
@@ -540,6 +564,7 @@ class Store:
 class App:
     def __init__(self, store, password, secret, secure=False):
         self.store, self.password, self.secret, self.secure = store, password, secret.encode(), secure
+        self.worker = service_worker()
         self.accounts = Accounts(store.path, password, self.secret)
         store.accounts = self.accounts
         self.stores = {'owner': store}
@@ -710,7 +735,9 @@ class Handler(BaseHTTPRequestHandler):
                 except sqlite3.Error:
                     return self.reply(503, {'error': 'Не удалось загрузить сообщения. Повторите попытку.'})
             return self.reply(404, {'error': 'Не найдено.'})
-        files = {'/logo.svg': ('logo.svg', 'image/svg+xml'), '/favicon.svg': ('logo.svg', 'image/svg+xml'), '/favicon.ico': ('favicon.ico', 'image/vnd.microsoft.icon'), '/apple-touch-icon.png': ('apple-touch-icon.png', 'image/png'), '/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/theme.js': ('theme.js', 'text/javascript'), '/draft.js': ('draft.js', 'text/javascript'), '/editor.js': ('editor.js', 'text/javascript'), '/links.js': ('links.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
+        if path == '/sw.js':
+            return self.reply(200, self.server.app.worker, content_type='text/javascript; charset=utf-8')
+        files = STATIC_FILES
         if path not in files:
             return self.reply(404, {'error': 'Не найдено.'})
         name, mime = files[path]
