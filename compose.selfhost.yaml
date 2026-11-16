@@ -1,0 +1,39 @@
+# Independent installation: no dependency on the maintainer's Caddy/network.
+name: textdrop
+services:
+  textdrop:
+    image: ${TEXTDROP_IMAGE:-ghcr.io/darkrise12/textdrop:1.0.0}
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${TEXTDROP_BIND:-127.0.0.1}:${TEXTDROP_PORT:-8765}:8765"
+    environment:
+      TEXTDROP_HOST: 0.0.0.0
+      TEXTDROP_PORT: "8765"
+      TEXTDROP_DATA: /data
+      TEXTDROP_SECURE: "${TEXTDROP_SECURE:-1}"
+      TEXTDROP_FILE_LIMIT: ${TEXTDROP_FILE_LIMIT:-131072000}
+      TEXTDROP_STORAGE_LIMIT: ${TEXTDROP_STORAGE_LIMIT:-3221225472}
+      TEXTDROP_PASSWORD_FILE: /run/secrets/textdrop_password
+      TEXTDROP_SECRET_FILE: /run/secrets/textdrop_secret
+    secrets:
+      - textdrop_password
+      - textdrop_secret
+    volumes:
+      - textdrop_data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/session', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+volumes:
+  textdrop_data:
+secrets:
+  textdrop_password:
+    file: ./.secrets/password
+  textdrop_secret:
+    file: ./.secrets/session

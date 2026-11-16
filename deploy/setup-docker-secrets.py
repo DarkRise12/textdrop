@@ -1,4 +1,5 @@
 """Create missing Compose secrets without replacing existing credentials."""
+import argparse
 import getpass
 import os
 from pathlib import Path
@@ -46,9 +47,13 @@ def prepare(root):
 
 
 if __name__ == '__main__':
-    root = Path(__file__).resolve().parents[1] / '.secrets'
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--directory', type=Path, default=Path(__file__).resolve().parents[1] / '.secrets', help='Secret directory (default: repository .secrets)')
+    parser.add_argument('--check', action='store_true', help='Validate without creating files')
+    args = parser.parse_args()
+    root = args.directory
     try:
-        if '--check' not in sys.argv:
+        if not args.check:
             prepare(root)
         problems = check(root)
         if problems:

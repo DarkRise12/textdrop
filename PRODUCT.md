@@ -28,3 +28,5 @@ File messages support private downloads, editable captions, 30-day trash and res
 Accounts have isolated chats, trash, files and browser drafts. Existing content belongs to admin with the installation password. The owner can create, disable, re-enable accounts and reset passwords. File and thumbnail quota remains 3 GiB shared across the service, with 125 MiB per file.
 
 PWA installation is available from login and account settings, with manual instructions where a browser prompt is unavailable. Only the public shell is cached. Private history, files and previews require a connection; a fresh offline launch must verify the account online before restoring its draft. There is no offline send queue. Updates preserve drafts and wait for editing, file selection and uploads to finish. System share-target integration remains a separate roadmap item.
+
+The owner has paused feature development and requested public self-hosted distribution. MIT licensing, versioned releases, AMD64/ARM64 container images, independent Compose setup and installation/maintenance documentation form the distribution scope. Existing production deployment remains separate.
