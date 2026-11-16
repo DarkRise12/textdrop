@@ -59,7 +59,7 @@ Right-aligned message bubbles have 14px corners and a 4px lower-right corner. Co
 - Trash: a separate section with a 30-day retention hint and per-record expiry. Restore is reversible; permanent deletion has its own confirmation. Keep the compose draft intact when switching sections and block switching while an edit is unsaved. Deleted records use full-width rows with the established message palette.
 - Links: underline HTTP/HTTPS URLs using accent ink in both themes. New tabs use noopener/noreferrer; the surrounding text and punctuation stay literal.
 - Actions: copy, edit and delete use 44px SVG icon buttons on all devices. Preserve accessible names, tooltips, focus and copy confirmation; keep actions on one row to avoid tall bubbles. Destructive deletion uses the existing confirmation dialog.
-- Header: wordmark reads `text->drop`, with the arrow in accent ink. Theme control has a tinted outlined surface; the account button displays the username at every breakpoint, and logout is a quiet action inside account settings. The chat header shows message count and sync status, with no Saved Messages title.
+- Header: wordmark reads `text->drop`, with the arrow in accent ink, beside a purple rounded-square mark containing a white drop and purple transfer arrow. Theme control has a tinted outlined surface; the account button displays the username at every breakpoint, and logout is a quiet action inside account settings. The chat header shows message count and sync status, with no Saved Messages title.
 - Theme: visible on both login and chat screens; accessible name announces the destination theme. Focus remains visible and reduced-motion preference suppresses transitions.
 
 ## Do's and Don'ts
@@ -73,3 +73,7 @@ Keep a fixed heading/close control and quiet logout footer around a scrolling bo
 ## Attachment groups
 
 Allow up to ten selected files with a shared caption. Show a compact count, total size, free-space hint, a bounded scrolling list with per-file removal, and a remove-all action. Keep the composer visible at 320px. In the message, group photo previews in two columns and give documents full-width download rows. Keep original filenames literal. Progress/cancel, trash/restore and retry act on the whole message.
+
+## Brand assets
+
+Use `static/logo.svg` for the header and SVG favicon. Fixed #733bb8 and white work in both themes. The header mark is 32px on desktop and 26px on phones; preserve the wordmark and visible account name at 320px. The ICO fallback contains 16/32/48px variants; the opaque 180px PNG supports touch bookmarks. No font, image library or external request is required.

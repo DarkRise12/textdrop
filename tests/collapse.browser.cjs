@@ -43,7 +43,7 @@ const fs = require('node:fs'), path = require('node:path'), os = require('node:o
       }
       const name = pathname === '/' ? 'index.html' : pathname.slice(1);
       return route.fulfill({body: fs.readFileSync(path.join(root, name)),
-        contentType: name.endsWith('html') ? 'text/html' : name.endsWith('css') ? 'text/css' : 'text/javascript'});
+        contentType: name.endsWith('html') ? 'text/html' : name.endsWith('css') ? 'text/css' : name.endsWith('svg') ? 'image/svg+xml' : 'text/javascript'});
     });
     const page = await context.newPage(), errors = [];
     page.on('pageerror', error => errors.push(error.message));

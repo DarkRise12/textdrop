@@ -710,7 +710,7 @@ class Handler(BaseHTTPRequestHandler):
                 except sqlite3.Error:
                     return self.reply(503, {'error': 'Не удалось загрузить сообщения. Повторите попытку.'})
             return self.reply(404, {'error': 'Не найдено.'})
-        files = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/theme.js': ('theme.js', 'text/javascript'), '/draft.js': ('draft.js', 'text/javascript'), '/editor.js': ('editor.js', 'text/javascript'), '/links.js': ('links.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
+        files = {'/logo.svg': ('logo.svg', 'image/svg+xml'), '/favicon.svg': ('logo.svg', 'image/svg+xml'), '/favicon.ico': ('favicon.ico', 'image/vnd.microsoft.icon'), '/apple-touch-icon.png': ('apple-touch-icon.png', 'image/png'), '/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/theme.js': ('theme.js', 'text/javascript'), '/draft.js': ('draft.js', 'text/javascript'), '/editor.js': ('editor.js', 'text/javascript'), '/links.js': ('links.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
         if path not in files:
             return self.reply(404, {'error': 'Не найдено.'})
         name, mime = files[path]

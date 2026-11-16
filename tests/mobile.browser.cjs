@@ -16,7 +16,7 @@ const {chromium}=require('playwright');const fs=require('node:fs'),path=require(
    if(pathname==='/api/trash')return route.fulfill({json:trash});
    const name=pathname==='/'?'index.html':pathname.slice(1);
    if(!fs.existsSync(path.join(root,name)))return route.fulfill({status:404,body:''});
-   return route.fulfill({body:fs.readFileSync(path.join(root,name)),contentType:name.endsWith('html')?'text/html':name.endsWith('css')?'text/css':'text/javascript'});
+   return route.fulfill({body:fs.readFileSync(path.join(root,name)),contentType:name.endsWith('html')?'text/html':name.endsWith('css')?'text/css':name.endsWith('svg')?'image/svg+xml':'text/javascript'});
   });
   const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('http://textdrop.test/');await page.locator('.note').last().waitFor();
   function visibleCount(){return page.evaluate(()=>{const history=document.getElementById('history').getBoundingClientRect();return [...document.querySelectorAll('.note')].filter(n=>{const r=n.getBoundingClientRect();return r.top>=history.top&&r.bottom<=history.bottom}).length;});}

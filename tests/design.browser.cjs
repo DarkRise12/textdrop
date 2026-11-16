@@ -28,6 +28,9 @@ const fs = require('node:fs'), path = require('node:path'), os = require('node:o
       await page.locator('#search').fill(query); await idle();
     };
     await page.goto(base); await page.locator('#login').waitFor();
+    await page.locator('.brand-icon').evaluate(image => image.decode());
+    assert(await page.locator('.brand-icon').evaluate(image => image.naturalWidth > 0));
+    for (const url of ['/favicon.svg', '/favicon.ico', '/apple-touch-icon.png']) assert.equal((await context.request.get(base + url)).status(), 200);
     assert.equal(await page.locator('#username').inputValue(), '');
     await page.locator('#password').fill('auditpw');
     await page.locator('#login-form .password-toggle').click(); assert.equal(await page.locator('#password').getAttribute('type'), 'text');

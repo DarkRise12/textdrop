@@ -315,3 +315,13 @@ mark { color: var(--ink); background: var(--selection); border-radius: 2px; }
 .multiple-files .image-preview { max-width: none; }
 .multiple-files .file-download { font-size: 13px; }
 .files-heading { font-size: 12px; margin-bottom: 10px; }
+
+.brand { gap: 8px; }
+.brand-icon { display: block; width: 32px; height: 32px; flex-shrink: 0; }
+.brand-wordmark { display: inline-flex; align-items: center; gap: 5px; }
+@media (max-width: 600px) {
+  .brand-icon { width: 26px; height: 26px; }
+  .brand-wordmark { gap: 3px; }
+  #account-button { max-width: min(150px, calc(100vw - 252px)); gap: 0; }
+  #account-button > svg { display: none; }
+}
