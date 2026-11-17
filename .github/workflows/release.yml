@@ -22,14 +22,14 @@ jobs:
           node-version: '22'
       - run: "python -m pip install --only-binary=:all: -r requirements.txt"
       - run: python -m unittest discover -s tests -v
-      - run: node --check static/app.js && node --check static/theme.js && node --check static/draft.js && node --check static/editor.js && node --check static/links.js && node --check static/pwa.js && node --check static/sw.js
+      - run: node --check static/categories.js && node --check static/app.js && node --check static/theme.js && node --check static/draft.js && node --check static/editor.js && node --check static/links.js && node --check static/pwa.js && node --check static/sw.js
       - run: node --test tests/*.test.cjs
       - run: sh -n deploy/backup.sh && bash -n deploy/github-deploy.sh
       - run: docker compose config --quiet
       - run: docker build -t textdrop-test .
       - run: sh deploy/container-smoke.sh textdrop-test linux/amd64
       - name: Install the release bundle from scratch
-        run: sh deploy/install-smoke.sh textdrop-test 1.0.0
+        run: sh deploy/install-smoke.sh textdrop-test 1.1.0
 
   deploy:
     needs: test

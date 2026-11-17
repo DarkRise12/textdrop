@@ -83,3 +83,7 @@ Use `static/logo.svg` for the header and SVG favicon. Fixed #733bb8 and white wo
 Keep installation quiet: one action below login and another in account settings; hide both in standalone mode. Use the existing drop/arrow mark for 192/512px icons and an opaque maskable variant. Respect safe-area insets. Manual installation instructions use the existing native dialog.
 
 A fresh offline launch shows a connection screen with retry, without private history or drafts before server authentication. Preserve text and show a concise connection notice when an open chat loses its connection. Updates appear in a compact bar above the workspace and require an explicit action. Save the draft before reloading; explain why editing, selected files or an upload must finish first. Never force another open tab to reload.
+
+## Message categories
+
+Preset emoji reaction chips sit below a message's metadata; tapping a chip removes its category in chat. A tag icon in message actions opens a compact multi-choice picker. Preserve text, attachment layout and editor state. The toolbar tag opens a single-category filter with an explicit All messages action; combine it with search. On screens up to 380px, show only the active emoji to preserve one compact toolbar row. In trash, chips filter but do not mutate a deleted message. Use existing theme tokens, safe text rendering and system emoji fonts; do not download assets or add a library.

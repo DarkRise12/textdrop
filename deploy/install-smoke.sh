@@ -2,7 +2,7 @@
 # Exercise the actual release bundle and Compose secrets in a disposable project.
 set -eu
 image=${1:?image required}
-version=${2:-1.0.0}
+version=${2:-1.1.0}
 work=$(mktemp -d)
 project="textdrop-install-smoke-$$"
 cleanup() {

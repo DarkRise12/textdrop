@@ -2,7 +2,7 @@
 name: textdrop
 services:
   textdrop:
-    image: ${TEXTDROP_IMAGE:-ghcr.io/darkrise12/textdrop:1.0.0}
+    image: ${TEXTDROP_IMAGE:-ghcr.io/darkrise12/textdrop:1.1.0}
     restart: unless-stopped
     init: true
     ports:

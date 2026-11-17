@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0
+
+- Seven preset message categories: Important, Work, Personal, Ideas, Read, Later and Done (Russian labels with emoji).
+- Multiple categories per message, shown as reaction chips; click a chip to remove it.
+- A compact category filter works across the full history, combines with body/filename search and supports trash.
+- Memberships synchronize across devices, remain private to each account, survive editing/trash/restore and are included in backups.
+- Additive `note_categories` migration; rollback to 1.0.0 keeps the data but hides the feature.
+- Lightweight browser-native picker with a fallback for older browsers; no new runtime dependency.
+
 ## 1.0.0
 
 First packaged self-hosted release.

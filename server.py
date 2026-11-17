@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parent
 STATIC_FILES = {'/logo.svg': ('logo.svg', 'image/svg+xml'), '/favicon.svg': ('logo.svg', 'image/svg+xml'), '/favicon.ico': ('favicon.ico', 'image/vnd.microsoft.icon'), '/apple-touch-icon.png': ('apple-touch-icon.png', 'image/png'), '/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/theme.js': ('theme.js', 'text/javascript'), '/draft.js': ('draft.js', 'text/javascript'), '/editor.js': ('editor.js', 'text/javascript'), '/links.js': ('links.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
 STATIC_FILES.update({
     '/manifest.webmanifest': ('manifest.webmanifest', 'application/manifest+json'),
+    '/categories.js': ('categories.js', 'text/javascript'),
     '/pwa.js': ('pwa.js', 'text/javascript'),
     '/icon-192.png': ('icon-192.png', 'image/png'),
     '/icon-512.png': ('icon-512.png', 'image/png'),
@@ -67,14 +68,26 @@ ATTACHMENT_SELECT = (', a.name AS attachment_name, a.size AS attachment_size, a.
     'WHERE g.note_id=n.id ORDER BY g.position) f) AS attachment_list ')
 FILE_SEARCH = ('EXISTS (SELECT 1 FROM attachment_groups g JOIN attachments f ON f.note_id=g.file_id '
                'WHERE g.note_id=n.id AND instr(casefold(f.name), ?) > 0)')
+CATEGORIES = tuple(dict(id=hashlib.sha256(key.encode()).hexdigest()[:32], name=name, emoji=emoji)
+                   for key, name, emoji in (
+                       ('important', 'Важное', '⭐'), ('work', 'Работа', '💼'),
+                       ('personal', 'Личное', '🏠'), ('ideas', 'Идеи', '💡'),
+                       ('reading', 'Почитать', '📚'), ('later', 'Позже', '🕒'),
+                       ('done', 'Сделано', '✅')))
+CATEGORY_IDS = frozenset(category['id'] for category in CATEGORIES)
+CATEGORY_SELECT = (", (SELECT json_group_array(category_id) FROM (SELECT category_id FROM note_categories "
+                   "WHERE note_id=n.id ORDER BY category_id)) AS category_list ")
 NOTE_SELECT = ('SELECT n.id, n.text, n.created, COALESCE(v.version, 0) AS version, v.updated'
-               + ATTACHMENT_SELECT + 'FROM notes n LEFT JOIN note_versions v ON v.note_id = n.id '
+               + ATTACHMENT_SELECT + CATEGORY_SELECT + 'FROM notes n LEFT JOIN note_versions v ON v.note_id = n.id '
                'LEFT JOIN attachments a ON a.note_id = n.id LEFT JOIN attachment_images i ON i.note_id = n.id')
-TRASH_SELECT = 'SELECT n.*' + ATTACHMENT_SELECT + 'FROM trash n LEFT JOIN attachments a ON a.note_id = n.id LEFT JOIN attachment_images i ON i.note_id = n.id'
+TRASH_SELECT = 'SELECT n.*' + ATTACHMENT_SELECT + CATEGORY_SELECT + 'FROM trash n LEFT JOIN attachments a ON a.note_id = n.id LEFT JOIN attachment_images i ON i.note_id = n.id'
 
 
 def note_record(row):
     note = dict(row)
+    categories = json.loads(note.pop('category_list', '[]') or '[]')
+    if categories:
+        note['categories'] = categories
     name = note.pop('attachment_name', None)
     size = note.pop('attachment_size', None)
     digest = note.pop('attachment_sha256', None)
@@ -195,6 +208,48 @@ class Store:
                         ON CONFLICT(note_id) DO UPDATE SET revision = excluded.revision;
                         END''')
 
+            db.execute('CREATE TABLE IF NOT EXISTS note_categories (note_id TEXT NOT NULL, category_id TEXT NOT NULL, PRIMARY KEY(note_id, category_id))')
+            db.execute('CREATE INDEX IF NOT EXISTS category_notes ON note_categories(category_id, note_id)')
+            for event in ('INSERT', 'DELETE'):
+                row = 'OLD' if event == 'DELETE' else 'NEW'
+                db.execute(f'''CREATE TRIGGER IF NOT EXISTS feed_category_{event.lower()}
+                    AFTER {event} ON note_categories BEGIN
+                    UPDATE sync_state SET revision=revision+1 WHERE singleton=1;
+                    INSERT INTO note_changes VALUES ({row}.note_id, (SELECT revision FROM sync_state))
+                    ON CONFLICT(note_id) DO UPDATE SET revision=excluded.revision;
+                    END''')
+            for table in ('notes', 'trash'):
+                db.execute(f'''CREATE TRIGGER IF NOT EXISTS category_cleanup_{table} AFTER DELETE ON {table} BEGIN
+                    DELETE FROM note_categories WHERE note_id=OLD.id
+                    AND NOT EXISTS (SELECT 1 FROM notes WHERE id=OLD.id)
+                    AND NOT EXISTS (SELECT 1 FROM trash WHERE id=OLD.id);
+                    END''')
+
+    @staticmethod
+    def category_param(category):
+        if category and (not isinstance(category, str) or category not in CATEGORY_IDS):
+            raise ValueError('Некорректная категория.')
+        return category
+
+    @staticmethod
+    def categories():
+        return [dict(category) for category in CATEGORIES]
+
+    def mark_category(self, note_id, category_id, active):
+        if type(active) is not bool:
+            raise ValueError('Укажи состояние категории.')
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if not db.execute('SELECT 1 FROM notes WHERE id=?', (note_id,)).fetchone():
+                raise RequestGone('Сообщение удалено. Восстанови его из корзины.')
+            if category_id not in CATEGORY_IDS:
+                raise ValueError('Неизвестная категория.')
+            if active:
+                db.execute('INSERT OR IGNORE INTO note_categories VALUES (?,?)', (note_id,category_id))
+            else:
+                db.execute('DELETE FROM note_categories WHERE note_id=? AND category_id=?', (note_id,category_id))
+            return note_record(db.execute(NOTE_SELECT + ' WHERE n.id=?', (note_id,)).fetchone())
+
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=10)
@@ -239,13 +294,21 @@ class Store:
         return NOTE_SELECT, 'notes n', 'n.created'
 
     @staticmethod
-    def feed_counts(db, table, query):
+    def feed_counts(db, table, query, category=''):
         total = db.execute('SELECT count(*) FROM ' + table).fetchone()[0]
-        matched = db.execute('SELECT count(*) FROM ' + table + ' WHERE instr(casefold(n.text), ?) > 0 OR ' + FILE_SEARCH, (query, query)).fetchone()[0] if query else total
+        conditions, args = [], []
+        if query:
+            conditions.append('(instr(casefold(n.text), ?) > 0 OR ' + FILE_SEARCH + ')')
+            args.extend((query, query))
+        if category:
+            conditions.append('EXISTS (SELECT 1 FROM note_categories nc WHERE nc.note_id=n.id AND nc.category_id=?)')
+            args.append(category)
+        matched = db.execute('SELECT count(*) FROM ' + table + (' WHERE ' + ' AND '.join(conditions) if conditions else ''), args).fetchone()[0]
         return {'total': total, 'matched': matched}
 
-    def page(self, query='', before=None, limit=PAGE_SIZE, trash=False):
+    def page(self, query='', before=None, limit=PAGE_SIZE, trash=False, category=''):
         query = self.feed_params(query, limit)
+        category = self.category_param(category)
         cursor = self.parse_cursor(before) if before is not None else None
         if trash:
             self.purge_expired()
@@ -253,6 +316,8 @@ class Store:
         conditions, args = [], []
         if query:
             conditions.append("(instr(casefold(n.text), ?) > 0 OR " + FILE_SEARCH + ")"); args.extend((query, query))
+        if category:
+            conditions.append('EXISTS (SELECT 1 FROM note_categories nc WHERE nc.note_id=n.id AND nc.category_id=?)'); args.append(category)
         if cursor:
             conditions.append(f'({key}, n.id) < (?, ?)'); args.extend(cursor)
         where = ' WHERE ' + ' AND '.join(conditions) if conditions else ''
@@ -269,10 +334,11 @@ class Store:
                     break
                 items.append(note); size += cost
             return dict(items=items, next=self.cursor(items[-1], trash) if more else None,
-                        revision=revision, **self.feed_counts(db, table, query))
+                        revision=revision, categories=self.categories(), **self.feed_counts(db, table, query, category))
 
-    def changes(self, since, query='', limit=PAGE_SIZE, trash=False):
+    def changes(self, since, query='', limit=PAGE_SIZE, trash=False, category=''):
         query = self.feed_params(query, limit)
+        category = self.category_param(category)
         if type(since) is not int or not 0 <= since <= 2 ** 53 - 1:
             raise ValueError('Некорректная версия синхронизации.')
         if trash:
@@ -290,6 +356,8 @@ class Store:
                 note = note_record(record) if record is not None else None
                 if note is not None:
                     note['matches'] = not query or query in note['text'].casefold() or any(query in file['name'].casefold() for file in note.get('files', [note['file']] if 'file' in note else []))
+                if note is not None and category:
+                    note['matches'] = note['matches'] and category in note.get('categories', [])
                 cost = len(json.dumps(note or row['note_id'], ensure_ascii=False).encode()) + 2
                 if len(items) + len(removed) == limit or ((items or removed) and size + cost > PAGE_BYTES):
                     more = True
@@ -300,7 +368,7 @@ class Store:
                     items.append(note)
                 processed = row['revision']; size += cost
             return dict(items=items, removed=removed, revision=processed if more else revision,
-                        has_more=more, **self.feed_counts(db, table, query))
+                        has_more=more, categories=self.categories(), **self.feed_counts(db, table, query, category))
 
     def get(self, note_id):
         with self.connect() as db:
@@ -703,15 +771,17 @@ class Handler(BaseHTTPRequestHandler):
             file_match = re.fullmatch(r'/api/files/([a-f0-9]{32})', path)
             if file_match:
                 return self.download_file(file_match[1])
+            if path == '/api/categories':
+                return self.reply(200, self.store.categories())
             if path in ('/api/notes/page', '/api/trash/page', '/api/notes/changes', '/api/trash/changes'):
                 try:
                     params = parse_qs(urlsplit(self.path).query, keep_blank_values=True, errors='strict', max_num_fields=8)
                     changes = path.endswith('/changes')
-                    allowed = {'q', 'limit', 'since' if changes else 'before'}
+                    allowed = {'q', 'limit', 'category', 'since' if changes else 'before'}
                     if any(key not in allowed or len(values) != 1 for key, values in params.items()):
                         raise ValueError('Некорректные параметры запроса.')
                     value = lambda key, default=None: params.get(key, [default])[0]
-                    kwargs = dict(query=value('q', ''), limit=int(value('limit', str(PAGE_SIZE))), trash=path.startswith('/api/trash/'))
+                    kwargs = dict(category=value('category', ''), query=value('q', ''), limit=int(value('limit', str(PAGE_SIZE))), trash=path.startswith('/api/trash/'))
                     if changes:
                         result = self.store.changes(int(value('since', '-1')), **kwargs)
                     else:
@@ -934,6 +1004,9 @@ class Handler(BaseHTTPRequestHandler):
                     app.accounts.set_active(match[1], data.get('active'))
                     return self.reply(200, {'ok': True})
                 return self.reply(404, {'error': 'Не найдено.'})
+            mark_match = re.fullmatch(r'/api/notes/([a-f0-9]{32})/categories/([a-f0-9]{32})', self.path)
+            if mark_match and self.command == 'PATCH':
+                return self.reply(200, self.store.mark_category(*mark_match.groups(), data.get('active')))
             if self.path == '/api/notes' and self.command == 'POST':
                 return self.reply(201, self.store.add(data.get('text'), data.get('request_id')))
             restore_match = re.fullmatch(r'/api/trash/([^/]+)/restore', self.path)

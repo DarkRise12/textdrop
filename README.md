@@ -9,6 +9,7 @@ server, open it from any device, and keep the same history everywhere.
 ## Features
 
 - Chat-style history, editing, search, copying, safe links and 30-day trash.
+- Seven preset emoji categories shown as reactions; filter your history by category and search together.
 - Up to **10 files per message**, **125 MiB per file**, **3 GiB total** by default.
 - Lightweight image previews, light/dark themes and a responsive mobile interface.
 - Owner-created accounts with separate messages, files and drafts; no public registration.
@@ -26,10 +27,10 @@ and `sha256sum`. For access across devices, use a domain and an HTTPS reverse pr
 
 ```sh
 mkdir textdrop && cd textdrop
-curl -fLO https://github.com/DarkRise12/textdrop/releases/download/v1.0.0/textdrop-install-1.0.0.tar.gz
-curl -fLO https://github.com/DarkRise12/textdrop/releases/download/v1.0.0/SHA256SUMS
+curl -fLO https://github.com/DarkRise12/textdrop/releases/download/v1.1.0/textdrop-install-1.1.0.tar.gz
+curl -fLO https://github.com/DarkRise12/textdrop/releases/download/v1.1.0/SHA256SUMS
 sha256sum --check SHA256SUMS
-tar -xzf textdrop-install-1.0.0.tar.gz
+tar -xzf textdrop-install-1.1.0.tar.gz
 cp .env.example .env
 python3 deploy/setup-docker-secrets.py
 docker compose up -d --wait
@@ -47,7 +48,7 @@ For your own installation use the release bundle or **`compose.selfhost.yaml`**.
 
 ## Updates and data
 
-Images use version tags such as `ghcr.io/darkrise12/textdrop:1.0.0`; pin a release
+Images use version tags such as `ghcr.io/darkrise12/textdrop:1.1.0`; pin a release
 instead of automatically following `latest`. Read its changelog, create a backup,
 change `TEXTDROP_IMAGE` in `.env`, then run `docker compose pull` and
 `docker compose up -d --wait`. Application updates never require deleting the

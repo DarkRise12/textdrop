@@ -5,6 +5,7 @@ let editor = null;
 let sessionEpoch = 0, currentUser = null, startupAttempt = 0, startupLoading = false;
 let view = 'chat', syncAgain = false, viewLoaded = false;
 let noticeKind = '';
+let categoryUI;
 let currentQuery = '', searchTimer = null, feedAbort = null;
 let nextPage = null, feedRevision = null, totalNotes = 0, matchedNotes = 0, loadedThrough = null;
 let olderLoading = false, lastHistoryScroll = 0;
@@ -105,6 +106,7 @@ function session(active, user = currentUser) {
       if (editor) editor.closed = true;
       editor = null; selectedFiles = []; pendingFileSend = null; pendingSend = null;
       $('text').value = ''; draftStatus(''); draftReady = false;
+      categoryUI?.reset();
       currentQuery = ''; $('search').value = ''; view = 'chat'; storageState = null;
       $('workspace').dataset.view = view;
       $('view-chat').setAttribute('aria-pressed', 'true');
@@ -120,6 +122,7 @@ function session(active, user = currentUser) {
     try { localStorage.setItem('textdrop-username-v1', user.username); } catch {}
   }
   $('account-button').hidden = !active;
+  if (!active) categoryUI?.reset();
   if (!active && $('account-dialog').open) $('account-dialog').close();
   sessionEpoch++;
   uploadRequest?.abort();
@@ -431,6 +434,7 @@ function render({forceBottom = false, searchChanged = false, preserveScroll = fa
   const focusAction = focused?.dataset.action;
   const selection = focusAction === 'edit-text' ? [focused.selectionStart, focused.selectionEnd] : null;
   const query = currentQuery;
+  const filtering = Boolean(query || categoryUI?.filter);
   const visible = notes.slice();
   if ($('image-viewer').open && !notes.some(note => note.id === $('image-viewer').dataset.noteId)) closeImageViewer();
   if (editor && !visible.some(note => note.id === editor.id)) visible.push(editor.note);
@@ -439,11 +443,11 @@ function render({forceBottom = false, searchChanged = false, preserveScroll = fa
   $('workspace').classList.toggle('has-query', Boolean(query));
   $('search-results-label').hidden = !query;
   $('search-results-label').textContent = viewLoaded ? 'Найдено: ' + matchedNotes : 'Ищем…';
-  $('count').textContent = query ? matchedNotes : totalNotes;
+  $('count').textContent = filtering ? matchedNotes : totalNotes;
   $('count').title = 'Найдено: ' + matchedNotes + '. Всего: ' + totalNotes + '. Загружено: ' + notes.length;
-  $('count-label').textContent = query ? 'Найдено:' : view === 'trash' ? 'В корзине:' : 'Всего сообщений:';
+  $('count-label').textContent = filtering ? 'Найдено:' : view === 'trash' ? 'В корзине:' : 'Всего сообщений:';
   $('empty').hidden = !viewLoaded || totalNotes > 0 || notes.length > 0 || !!editor;
-  $('no-results').hidden = !viewLoaded || !query || !totalNotes || matchedNotes > 0 || !!editor;
+  $('no-results').hidden = !viewLoaded || !filtering || !totalNotes || matchedNotes > 0 || !!editor;
   updatePageControls();
   const fragment = document.createDocumentFragment();
   const previews = [];
@@ -530,6 +534,7 @@ function render({forceBottom = false, searchChanged = false, preserveScroll = fa
       article.append(text, meta);
       previews.push(mountMessagePreview(article, text, note, Boolean(query)));
     }
+    categoryUI?.decorate(article, note, actions, view === 'trash');
     fragment.append(article);
   }
   $('notes').replaceChildren(fragment);
@@ -580,6 +585,7 @@ function updatePageControls() {
 }
 function feedPath(kind, cursor) {
   const params = new URLSearchParams({limit: '50', q: currentQuery});
+  if (categoryUI?.filter) params.set('category', categoryUI.filter);
   if (kind === 'changes') params.set('since', String(feedRevision));
   else if (cursor) params.set('before', cursor);
   return (view === 'trash' ? 'trash/' : 'notes/') + kind + '?' + params;
@@ -613,6 +619,8 @@ async function sync() {
     if (feedRevision === null) {
       const data = await api(feedPath('page'), 'GET', undefined, feedAbort.signal);
       if (generation !== current) return;
+      categoryUI?.accept(data.categories || []);
+      if (generation !== current) return;
       // An editor may be outside the page or the new query. Absence is not deletion.
       const watched = editor;
       if (view === 'chat' && watched) {
@@ -635,6 +643,8 @@ async function sync() {
         if (data.revision < feedRevision || (data.has_more && data.revision === feedRevision)) {
           throw apiError('Ошибка версии синхронизации. Повтори подключение.', 200, 'protocol');
         }
+        const categoriesChanged = categoryUI?.accept(data.categories || []);
+        if (generation !== current) return;
         const previous = JSON.stringify(notes);
         const previousIds = new Set(notes.map(note => note.id));
         const following = $('history').scrollHeight - $('history').scrollTop - $('history').clientHeight < 80;
@@ -653,7 +663,7 @@ async function sync() {
         notes = [...merged.values()];
         const countersChanged = totalNotes !== data.total || matchedNotes !== data.matched;
         totalNotes = data.total; matchedNotes = data.matched; feedRevision = data.revision;
-        if (JSON.stringify(notes) !== previous || countersChanged || !online) render();
+        if (JSON.stringify(notes) !== previous || countersChanged || categoriesChanged || !online) render();
         if (view === 'chat' && !following && !currentQuery && notes.some(note => !previousIds.has(note.id))) $('latest').hidden = false;
         if (!data.has_more) break;
       }
@@ -676,6 +686,8 @@ async function loadOlder() {
   feedAbort = new AbortController(); updatePageControls();
   try {
     const data = await api(feedPath('page', nextPage), 'GET', undefined, feedAbort.signal);
+    if (generation !== current) return;
+    categoryUI?.accept(data.categories || []);
     if (generation !== current) return;
     // Preserve already loaded records if a mutation happened before this page snapshot.
     const merged = new Map(notes.map(note => [note.id, note]));
@@ -922,6 +934,19 @@ setInterval(() => {
   if (!$('offline-start').hidden && navigator.onLine && !startupLoading) start();
   else sync();
 }, 3000);
+categoryUI = new window.TextdropCategories({
+  api,
+  onFilter() { changeSearch(currentQuery); },
+  onMarked(saved) {
+    if (saved) {
+      if (noticeKind === 'category') notice('');
+      notes = notes.map(note => note.id === saved.id ? saved : note);
+      if (categoryUI.filter && !(saved.categories || []).includes(categoryUI.filter)) notes = notes.filter(note => note.id !== saved.id);
+    }
+    render({preserveScroll: true}); sync();
+  },
+  onError(error) { notice(errorMessage(error), 'category'); }
+});
 start();
 
 function accountFeedback(message, success = false) {
