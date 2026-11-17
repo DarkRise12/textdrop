@@ -14,7 +14,7 @@ spec.loader.exec_module(release)
 class ReleasePackageTests(unittest.TestCase):
     def test_install_bundle_allowlist_checksum_and_no_overwrite(self):
         with tempfile.TemporaryDirectory() as directory:
-            archive = release.package('1.1.0', directory)
+            archive = release.package('1.1.1', directory)
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             self.assertEqual((Path(directory) / 'SHA256SUMS').read_text(), f'{digest}  {archive.name}\n')
             with tarfile.open(archive) as bundle:
@@ -24,16 +24,16 @@ class ReleasePackageTests(unittest.TestCase):
                 self.assertNotIn('caddy_default', compose)
                 self.assertNotIn('build:', compose)
                 self.assertIn('127.0.0.1', compose)
-                self.assertIn('ghcr.io/darkrise12/textdrop:1.1.0', compose)
+                self.assertIn('ghcr.io/darkrise12/textdrop:1.1.1', compose)
                 self.assertEqual(bundle.extractfile('LICENSE').read(), (ROOT / 'LICENSE').read_bytes())
             before = archive.read_bytes()
             with self.assertRaises(FileExistsError):
-                release.package('1.1.0', directory)
+                release.package('1.1.1', directory)
             self.assertEqual(archive.read_bytes(), before)
 
     def test_invalid_or_unconfigured_version_creates_no_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
-            for version in ('v1.1.0', '../1.1.0', '2.0.0', '1.1.0-rc1'):
+            for version in ('v1.1.1', '../1.1.1', '2.0.0', '1.1.1-rc1'):
                 with self.assertRaises(ValueError):
                     release.package(version, directory)
             self.assertEqual(list(Path(directory).iterdir()), [])

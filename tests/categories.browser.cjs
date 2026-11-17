@@ -69,6 +69,11 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
       await page.screenshot({path:path.join(captures,width+'-'+theme+'-picker.png'),animations:'disabled'});await page.keyboard.press('Escape');
       await page.screenshot({path:path.join(captures,width+'-'+theme+'-reactions.png'),animations:'disabled'});
     }
+    await page.locator('#text').fill('Отправлено из фильтра');await page.locator('#send').click();
+    await page.waitForFunction(()=>!document.getElementById('send').classList.contains('sending'));await idle(page);
+    assert.equal(await page.locator('#category-filter').getAttribute('aria-pressed'),'false');
+    assert.equal(await page.locator('.note-text').filter({hasText:'Отправлено из фильтра'}).count(),1);
+    await sync(page);assert.equal(await page.locator('.note-text').filter({hasText:'Отправлено из фильтра'}).count(),1);
     // Another account uses the same preset names, but owns different memberships.
     await context.request.post(base+'/api/users',{data:{username:'guest',password:'test-password'}});
     await other.clearCookies();await login(second,'guest');assert.equal(await second.locator('.note').count(),0);

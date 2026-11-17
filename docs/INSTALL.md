@@ -80,7 +80,7 @@ Set these values in `.env` beside the release's Compose file:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TEXTDROP_IMAGE` | `ghcr.io/darkrise12/textdrop:1.1.0` | Pinned release; AMD64/ARM64 selected automatically |
+| `TEXTDROP_IMAGE` | `ghcr.io/darkrise12/textdrop:1.1.1` | Pinned release; AMD64/ARM64 selected automatically |
 | `TEXTDROP_BIND` | `127.0.0.1` | Host binding; keep private behind proxy |
 | `TEXTDROP_PORT` | `8765` | Host port; container port remains 8765 |
 | `TEXTDROP_SECURE` | `1` | Secure cookies; `0` only for local HTTP trial |
@@ -106,10 +106,10 @@ Stop without deleting data: `docker compose down`. **Never use `down -v` to upda
 
 Avoid unattended `latest` updates on an installation with important data. Rolling
 back an image does not roll back the database; consult that release's schema notes.
-Version 1.1.0 adds `note_categories` and synchronization/cleanup triggers to each
+Version 1.1.1 adds `note_categories` and synchronization/cleanup triggers to each
 account database. Existing messages are unchanged and initially have no categories.
 The pre-deployment backup should be retained. Rolling back to 1.0.0 keeps stored
-category memberships but does not display or allow filtering them; return to 1.1.0
+category memberships but does not display or allow filtering them; return to 1.1.1
 to use them again. Restoring a pre-upgrade backup discards later changes.
 
 ## Backup and restore
@@ -140,7 +140,7 @@ Restore into a **new empty volume**, never over a running database:
    docker run --rm --user 0 --entrypoint sh \
      -v textdrop-restore_textdrop_data:/data \
      -v /absolute/backup-directory:/backup:ro \
-     ghcr.io/darkrise12/textdrop:1.1.0 \
+     ghcr.io/darkrise12/textdrop:1.1.1 \
      -c 'tar -xzf /backup/BACKUP.tar.gz -C /data && chown -R 10001:10001 /data'
    ```
 
@@ -152,15 +152,15 @@ Restore into a **new empty volume**, never over a running database:
 ## Build from source
 
 ```sh
-git clone --branch v1.1.0 --depth 1 https://github.com/DarkRise12/textdrop.git
+git clone --branch v1.1.1 --depth 1 https://github.com/DarkRise12/textdrop.git
 cd textdrop
 cp deploy/selfhost.env.example .env
 python3 deploy/setup-docker-secrets.py
-docker build -t textdrop:1.1.0 .
-TEXTDROP_IMAGE=textdrop:1.1.0 docker compose -f compose.selfhost.yaml up -d --wait
+docker build -t textdrop:1.1.1 .
+TEXTDROP_IMAGE=textdrop:1.1.1 docker compose -f compose.selfhost.yaml up -d --wait
 ```
 
-Set `TEXTDROP_IMAGE=textdrop:1.1.0` in `.env` for subsequent commands. Always pass
+Set `TEXTDROP_IMAGE=textdrop:1.1.1` in `.env` for subsequent commands. Always pass
 `-f compose.selfhost.yaml` in a source checkout; the default file is specific to
 the maintainer's server. Use the release bundle for the simpler installation path.
 

@@ -29,7 +29,7 @@ jobs:
       - run: docker build -t textdrop-test .
       - run: sh deploy/container-smoke.sh textdrop-test linux/amd64
       - name: Install the release bundle from scratch
-        run: sh deploy/install-smoke.sh textdrop-test 1.1.0
+        run: sh deploy/install-smoke.sh textdrop-test 1.1.1
 
   deploy:
     needs: test

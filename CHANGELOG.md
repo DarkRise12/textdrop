@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- After a successful send, clear the category filter together with search so the new, uncategorized message stays visible.
+
 ## 1.1.0
 
 - Seven preset message categories: Important, Work, Personal, Ideas, Read, Later and Done (Russian labels with emoji).

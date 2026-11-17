@@ -733,7 +733,7 @@ $('compose').onsubmit = async event => {
     saveDraft();
     resizeInput();
     if (view === 'chat' && !$('workspace').hidden) {
-      if (currentQuery) { currentQuery = ''; clearFeedState(); viewLoaded = false; }
+      if (currentQuery || categoryUI.filter) { currentQuery = ''; categoryUI.filter = ''; categoryUI.updateFilter(); clearFeedState(); viewLoaded = false; }
       $('search').value = ''; setSearchOpen(false); render({forceBottom: true});
       $('text').focus({preventScroll: true});
     }
